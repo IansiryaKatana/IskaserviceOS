@@ -1,0 +1,476 @@
+PRODUCT REQUIREMENTS DOCUMENT
+Project: ISKA SERVICE OS (Multi-Industry White-Label SaaS)
+1. PRODUCT VISION
+
+Build a configurable, multi-tenant, white-label Service Operating System that powers any appointment-based physical service business, including:
+
+Salon
+
+Spa
+
+Mechanic Workshop
+
+Clinic
+
+Fitness Studio
+
+Cleaning Service
+
+Custom Service Enterprises
+
+The platform must support:
+
+Multi-location businesses
+
+Staff-based booking
+
+Slot-based scheduling
+
+White-label branding
+
+SaaS hosting OR client-owned Supabase infrastructure
+
+2. PRODUCT STRATEGY
+
+The platform must operate in two modes:
+
+Mode A — Hosted SaaS (Primary Revenue Model)
+
+Tenant runs inside Iska Supabase cluster
+
+Monthly subscription
+
+Centralized platform control
+
+Mode B — Client-Owned Deployment
+
+Tenant chooses to deploy on their own Supabase instance
+
+One-time licensing fee
+
+Optional support contract
+
+Infrastructure isolation guaranteed
+
+This decision is selectable during Tenant Setup.
+
+3. CURRENT SYSTEM STATE (BASELINE)
+
+Current system supports:
+
+Locations
+
+Services
+
+Staff (Barber/Salonist logic)
+
+Slot-based booking
+
+Right-anchored booking UI
+
+Admin CRUD
+
+Image upload
+
+Booking history
+
+Role-based logic
+
+This PRD defines refactor and expansion.
+
+4. ARCHITECTURE TRANSFORMATION
+4.1 Multi-Tenant Refactor (Mandatory)
+
+All business data must be scoped by:
+
+tenant_id (UUID)
+
+Tables to Refactor:
+
+locations
+
+services
+
+service_categories
+
+staff
+
+bookings
+
+clients
+
+time_slots
+
+media_assets
+
+payments
+
+roles
+
+All queries must be RLS protected by tenant_id.
+
+4.2 Platform-Level Tables (New)
+platform_admins
+tenants
+tenant_subscriptions
+tenant_deployment_config
+
+5. TENANT SYSTEM DESIGN
+5.1 Tenants Table
+id
+name
+business_type
+logo_url
+favicon_url
+theme_config JSONB
+deployment_type (hosted | external)
+external_supabase_url
+external_supabase_anon_key
+external_supabase_service_key (encrypted)
+custom_domain
+subscription_plan
+status
+created_at
+
+6. DEPLOYMENT MODE SYSTEM
+6.1 Hosted Mode (Default)
+
+Uses Iska Supabase project
+
+All tenant data separated by tenant_id
+
+RLS enforced
+
+6.2 External Supabase Mode
+
+During tenant creation:
+
+Tenant selects:
+✔ Use Iska Hosting
+✔ Deploy On My Own Supabase
+
+If External selected:
+
+System collects:
+
+Supabase URL
+
+Anon key
+
+Service role key (encrypted server-side)
+
+System behavior:
+
+Dynamically instantiate Supabase client using tenant config
+
+All DB operations scoped to that Supabase project
+
+Isolation level: Full database isolation.
+
+7. INDUSTRY-AGNOSTIC REFACTOR
+
+Remove all salon-specific language from core.
+
+Replace with:
+
+staff_role
+
+service_category
+
+service_type
+
+resource_requirement
+
+Add flexible JSON fields:
+
+service_metadata JSONB
+location_metadata JSONB
+staff_metadata JSONB
+
+
+Examples:
+
+Mechanic:
+
+{
+  "requires_bay": true,
+  "requires_lift": true
+}
+
+
+Spa:
+
+{
+  "requires_room": true,
+  "gender_preference": true
+}
+
+8. CORE UNIVERSAL MODULES
+8.1 Booking Engine
+
+Flow:
+
+Select Location
+
+Select Category (Tabs)
+
+Select Service
+
+Select Staff (optional or required)
+
+Select Available Slot
+
+Confirm
+
+Rules:
+
+Slot-based only
+
+No manual time entry
+
+Conflict prevention
+
+Staff + location availability validation
+
+8.2 Staff Management
+
+Admin can:
+
+Create staff
+
+Assign to locations
+
+Assign working hours
+
+Assign service capability
+
+View performance analytics
+
+8.3 Service Management
+
+CRUD:
+
+Name
+
+Duration
+
+Price
+
+Category
+
+Tag color
+
+Default desktop image
+
+Default mobile image
+
+Upload support
+
+Metadata configuration
+
+8.4 Location Management
+
+CRUD:
+
+Address
+
+Capacity rules
+
+Operating hours
+
+Metadata (rooms, bays, etc.)
+
+8.5 Role Hierarchy
+
+Platform Owner (You)
+Tenant Owner
+Manager
+Staff
+Client
+
+RLS Policies:
+
+Platform owner sees all tenants
+
+Tenant owner sees only their tenant
+
+Staff sees assigned bookings
+
+Client sees own bookings only
+
+9. WHITE-LABEL THEME ENGINE
+
+Each tenant has:
+
+theme_config JSONB
+
+
+Example:
+
+{
+  "primary_color": "#000000",
+  "accent_color": "#C9A227",
+  "tag_color_a": "#7C6A0A",
+  "tag_color_b": "#5C3B2E",
+  "font_primary": "Inter Tight",
+  "font_secondary": "Domine",
+  "border_radius": "14px",
+  "panel_position": "right"
+}
+
+
+Frontend loads theme dynamically.
+
+CSS variables injected at runtime.
+
+No hardcoded brand styling.
+
+10. PHASE EXPANSION ROADMAP
+
+Now safe to build.
+
+Phase 2 — Payments
+
+Stripe integration
+
+Per-tenant Stripe keys
+
+Online prepayment or pay-at-location
+
+Invoice generation
+
+Refund support
+
+Phase 3 — Inventory + POS
+
+Generic stock table:
+
+stock_items
+stock_transactions
+
+
+Linked optionally to services.
+
+Works for:
+
+Mechanic parts
+
+Salon products
+
+Spa oils
+
+Cleaning supplies
+
+Phase 4 — CRM + Membership
+
+Loyalty programs
+
+Subscription plans
+
+Package booking bundles
+
+Automated reminders
+
+Review system
+
+11. SECURITY REQUIREMENTS
+
+All tenant isolation enforced via RLS
+
+External Supabase keys encrypted at rest
+
+Platform admin access audited
+
+Booking actions logged
+
+GDPR-ready structure
+
+12. UI REQUIREMENTS
+
+Maintain:
+
+Right-anchored booking panel
+
+Tab-based service categories
+
+Background swapping on selection
+
+Desktop + Mobile images per service
+
+Inter Tight primary font
+
+Domine secondary accent
+
+Smaller mobile typography
+
+13. ANALYTICS MODULE (Platform-Level)
+
+Per tenant:
+
+Total bookings
+
+Revenue
+
+Popular services
+
+Staff performance
+
+Location comparison
+
+Platform-level:
+
+Active tenants
+
+MRR
+
+Churn rate
+
+14. NON-FUNCTIONAL REQUIREMENTS
+
+Mobile-first responsive
+
+Lazy-loaded images
+
+Tenant config cached
+
+95+ Lighthouse target
+
+Scalable to 10k+ tenants
+
+15. SUCCESS METRICS
+
+Tenant setup under 5 minutes
+
+Booking completion < 60 seconds
+
+Zero cross-tenant data leaks
+
+99.9% uptime (hosted mode)
+
+16. WHAT WE BUILD FIRST
+
+Priority order:
+
+Multi-tenant refactor
+
+Theme engine
+
+Deployment mode selector
+
+RLS restructuring
+
+Stripe per-tenant config
+
+Inventory generic system
+
+17. STRATEGIC POSITIONING
+
+You are building:
+
+A White-Label Service Infrastructure Layer
+
+Not a salon product.
+
+Not a mechanic app.
+
+An infrastructure engine.
