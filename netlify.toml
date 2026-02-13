@@ -1,0 +1,20 @@
+# Netlify configuration for Iska Service OS
+# https://docs.netlify.com/configure-builds/file-based-configuration/
+#
+# Required environment variables (set in Netlify Dashboard > Site settings > Environment variables):
+#   VITE_SUPABASE_URL       - Your Supabase project URL
+#   VITE_SUPABASE_PUBLISHABLE_KEY - Your Supabase anon/public key
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+# Ensure consistent Node version
+[build.environment]
+  NODE_VERSION = "20"
+
+# SPA routing: serve index.html for all routes so React Router handles client-side routing
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

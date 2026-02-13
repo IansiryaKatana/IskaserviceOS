@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, Link, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useSiteSetting } from "@/hooks/use-site-settings";
-import { ArrowRight, Building2, Scissors, Sparkles, Car, Stethoscope, Dumbbell, X, Phone, Mail } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Building2, Scissors, Sparkles, Car, Stethoscope, Dumbbell, X, Phone, Mail } from "lucide-react";
 import { useCreateTenantRequest } from "@/hooks/use-tenant-requests";
 import { toast } from "sonner";
 
@@ -87,12 +87,12 @@ const Home = () => {
         <nav className="hidden gap-2 rounded-full bg-white/10 backdrop-blur-md shadow-lg px-3 py-2 font-body text-xs font-medium uppercase tracking-widest text-hero-muted md:flex">
           <button
             onClick={() => setPanelOpen(true)}
-            className={`rounded-full px-4 py-2 transition-colors ${
+            className={`rounded-full px-4 py-2 transition-colors uppercase ${
               location.pathname === "/" ? "text-white" : "hover:text-hero-foreground"
             }`}
             style={location.pathname === "/" ? { backgroundColor: '#d16e17' } : {}}
           >
-            Demos
+            DEMOS
           </button>
           <Link 
             to="/pricing" 
@@ -115,21 +115,12 @@ const Home = () => {
           <a href="/login" className="rounded-full bg-white px-4 py-2 text-black transition-colors hover:bg-white/90">
             Sign In
           </a>
-          <a 
-            href="/platform" 
-            className={`rounded-full px-4 py-2 transition-colors ${
-              location.pathname === "/platform" ? "text-white" : "hover:text-hero-foreground"
-            }`}
-            style={location.pathname === "/platform" ? { backgroundColor: '#d16e17' } : {}}
-          >
-            Dashboard
-          </a>
         </nav>
         <button
           onClick={() => setPanelOpen(true)}
           className="rounded-full bg-primary px-4 py-2 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-105 md:hidden"
         >
-          Demos
+          DEMOS
         </button>
       </header>
 
@@ -145,23 +136,11 @@ const Home = () => {
           <div className="mt-6 flex flex-wrap gap-3">
             <button
               onClick={() => setShowRequestDialog(true)}
-              className="group flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-105"
-            >
-              Get Started
-              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
-            </button>
-            <button
-              onClick={() => setPanelOpen(true)}
-              className="rounded-full px-6 py-3 text-sm font-medium uppercase tracking-wider text-white transition-transform hover:scale-105"
+              className="group flex items-center gap-2 rounded-full px-6 py-3 text-sm font-semibold uppercase tracking-wider text-white transition-transform hover:scale-105"
               style={{ backgroundColor: '#d16e17' }}
             >
-              Explore Demos
-            </button>
-            <button
-              onClick={() => navigate("/login")}
-              className="rounded-full bg-white px-6 py-3 text-sm font-medium uppercase tracking-wider text-black transition-transform hover:scale-105"
-            >
-              Sign In
+              Get Started
+              <ArrowUpRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
             </button>
           </div>
         </div>

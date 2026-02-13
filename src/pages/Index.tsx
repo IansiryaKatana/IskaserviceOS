@@ -267,10 +267,10 @@ const Index = () => {
             <img src="/iska systems logos.png" alt={tenantName} className="h-8 sm:h-10" />
           )}
         </a>
-        <nav className="hidden gap-6 font-body text-xs font-medium uppercase tracking-widest text-hero-muted md:flex">
-          <button onClick={() => { setPanelOpen(true); setStep("service"); }} className="hover:text-hero-foreground transition-colors">Services</button>
+        <nav className="hidden gap-2 rounded-full bg-white/10 backdrop-blur-md shadow-lg px-3 py-2 font-body text-xs font-medium uppercase tracking-widest text-hero-muted md:flex">
+          <button onClick={() => { setPanelOpen(true); setStep("service"); }} className="rounded-full px-4 py-2 uppercase hover:text-hero-foreground transition-colors">SERVICES</button>
           {tenant?.slug && (
-            <Link to={`/t/${tenant.slug}/reviews`} className="hover:text-hero-foreground transition-colors flex items-center gap-1">
+            <Link to={`/t/${tenant.slug}/reviews`} className="rounded-full px-4 py-2 hover:text-hero-foreground transition-colors flex items-center gap-1">
               Reviews
               {ratingStats && ratingStats.average_rating > 0 && (
                 <span className="flex items-center gap-0.5 text-[10px]">
@@ -280,8 +280,8 @@ const Index = () => {
               )}
             </Link>
           )}
-          <a href="/account" className="hover:text-hero-foreground transition-colors">Account</a>
-          <a href="/admin" className="hover:text-hero-foreground transition-colors">Admin</a>
+          <a href="/account" className="rounded-full px-4 py-2 hover:text-hero-foreground transition-colors">Account</a>
+          <a href="/admin" className="rounded-full px-4 py-2 hover:text-hero-foreground transition-colors">Admin</a>
         </nav>
         <button
           onClick={() => setPanelOpen(true)}

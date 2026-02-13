@@ -1,0 +1,3 @@
+# SPA fallback - Netlify reads this if netlify.toml redirects aren't used
+# All routes serve index.html for React Router client-side routing
+/*    /index.html   200
