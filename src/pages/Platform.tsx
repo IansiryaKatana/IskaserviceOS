@@ -59,6 +59,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import { useSiteSettings, useUpsertSiteSetting } from "@/hooks/use-site-settings";
+import { useTenantPaymentSettingsForm } from "@/hooks/use-tenant-payment-settings";
 import { usePlatformPaymentSettings, type PaymentProvider } from "@/hooks/use-platform-payment-settings";
 
 type Tab = "overview" | "tenants" | "admins" | "subscriptions" | "deployments" | "roles" | "payments" | "media";
@@ -557,6 +558,141 @@ const TenantReviewBgEditor = ({ tenantId }: { tenantId: string }) => {
   );
 };
 
+/** Tenant payment credentials for booking payments (PayPal, Stripe, M-Pesa). Money goes to this tenant's account. */
+const TenantPaymentEditor = ({ tenantId }: { tenantId: string }) => {
+  const {
+    paypalClientId,
+    stripePublishableKey,
+    mpesaConsumerKey,
+    mpesaShortcode,
+    payAtVenueEnabled,
+    save,
+    isSaving,
+  } = useTenantPaymentSettingsForm(tenantId);
+  const [paypalId, setPaypalId] = useState("");
+  const [paypalSecret, setPaypalSecret] = useState("");
+  const [stripePk, setStripePk] = useState("");
+  const [stripeSecret, setStripeSecret] = useState("");
+  const [mpesaKey, setMpesaKey] = useState("");
+  const [mpesaSecret, setMpesaSecret] = useState("");
+  const [mpesaShort, setMpesaShort] = useState("");
+  const [mpesaPass, setMpesaPass] = useState("");
+  const [payAtVenue, setPayAtVenue] = useState(true);
+  const { showSuccess, showError } = useFeedback();
+
+  useEffect(() => {
+    setPaypalId(paypalClientId || "");
+  }, [paypalClientId]);
+  useEffect(() => {
+    setStripePk(stripePublishableKey || "");
+  }, [stripePublishableKey]);
+  useEffect(() => {
+    setMpesaKey(mpesaConsumerKey || "");
+    setMpesaShort(mpesaShortcode || "");
+  }, [mpesaConsumerKey, mpesaShortcode]);
+  useEffect(() => {
+    setPayAtVenue(payAtVenueEnabled);
+  }, [payAtVenueEnabled]);
+
+  const handleSave = async () => {
+    try {
+      await save({
+        paypalClientId: paypalId.trim(),
+        paypalClientSecret: paypalSecret.trim() || undefined,
+        stripePublishableKey: stripePk.trim(),
+        stripeSecretKey: stripeSecret.trim() || undefined,
+        mpesaConsumerKey: mpesaKey.trim(),
+        mpesaConsumerSecret: mpesaSecret.trim() || undefined,
+        mpesaShortcode: mpesaShort.trim(),
+        mpesaPasskey: mpesaPass.trim() || undefined,
+        payAtVenueEnabled: payAtVenue,
+      });
+      setPaypalSecret("");
+      setStripeSecret("");
+      setMpesaSecret("");
+      setMpesaPass("");
+      showSuccess("Saved", "Payment settings saved. Once credentials are set, they go live for bookings.");
+    } catch (e: unknown) {
+      showError("Failed", e instanceof Error ? e.message : "Could not save.");
+    }
+  };
+
+  const labelCls = "block text-[11px] font-medium text-muted-foreground";
+  const inputCls = "mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm";
+  const sectionCls = "rounded-xl border border-border bg-card p-4 space-y-3";
+  const hasAny = paypalId.trim() || stripePk.trim() || (mpesaKey.trim() && mpesaShort.trim()) || true;
+  return (
+    <div className="space-y-6">
+      <p className="text-[10px] text-muted-foreground">
+        Configure <strong>booking payments</strong> for this tenant. When a tenant adds credentials, that option goes live on their booking page. Funds go to their account.
+      </p>
+
+      <div className={sectionCls}>
+        <h4 className="text-sm font-semibold text-card-foreground">PayPal</h4>
+        <div>
+          <label className={labelCls}>PayPal Client ID</label>
+          <input type="text" value={paypalId} onChange={(e) => setPaypalId(e.target.value)} placeholder="From PayPal Developer Dashboard" className={inputCls} />
+        </div>
+        <div>
+          <label className={labelCls}>PayPal Client Secret (optional – enter to set or update)</label>
+          <input type="password" value={paypalSecret} onChange={(e) => setPaypalSecret(e.target.value)} placeholder="Leave blank to keep existing" className={inputCls} autoComplete="off" />
+        </div>
+      </div>
+
+      <div className={sectionCls}>
+        <h4 className="text-sm font-semibold text-card-foreground">Stripe (card)</h4>
+        <div>
+          <label className={labelCls}>Stripe Publishable Key (pk_...)</label>
+          <input type="text" value={stripePk} onChange={(e) => setStripePk(e.target.value)} placeholder="pk_test_... or pk_live_..." className={inputCls} />
+        </div>
+        <div>
+          <label className={labelCls}>Stripe Secret Key (optional – enter to set or update)</label>
+          <input type="password" value={stripeSecret} onChange={(e) => setStripeSecret(e.target.value)} placeholder="sk_... Leave blank to keep existing" className={inputCls} autoComplete="off" />
+        </div>
+      </div>
+
+      <div className={sectionCls}>
+        <h4 className="text-sm font-semibold text-card-foreground">M-Pesa</h4>
+        <div>
+          <label className={labelCls}>Consumer Key</label>
+          <input type="text" value={mpesaKey} onChange={(e) => setMpesaKey(e.target.value)} placeholder="From Safaricom Daraja" className={inputCls} />
+        </div>
+        <div>
+          <label className={labelCls}>Consumer Secret (optional – enter to set or update)</label>
+          <input type="password" value={mpesaSecret} onChange={(e) => setMpesaSecret(e.target.value)} placeholder="Leave blank to keep existing" className={inputCls} autoComplete="off" />
+        </div>
+        <div>
+          <label className={labelCls}>Shortcode (Till / Paybill)</label>
+          <p className="mb-1 text-xs text-muted-foreground">Sandbox: use test shortcode from Daraja docs (e.g. 174379). Production: your M-Pesa Paybill or Till number from your business account / go-live.</p>
+          <input type="text" value={mpesaShort} onChange={(e) => setMpesaShort(e.target.value)} placeholder="e.g. 174379" className={inputCls} />
+        </div>
+        <div>
+          <label className={labelCls}>Passkey (optional – enter to set or update)</label>
+          <p className="mb-1 text-xs text-muted-foreground">From Daraja: Lipa Na M-Pesa Online (LNM) product for your shortcode. Sandbox test passkey is in the Daraja STK Push docs.</p>
+          <input type="password" value={mpesaPass} onChange={(e) => setMpesaPass(e.target.value)} placeholder="Lipa Na M-Pesa passkey" className={inputCls} autoComplete="off" />
+        </div>
+      </div>
+
+      <div className={sectionCls}>
+        <h4 className="text-sm font-semibold text-card-foreground">Pay at venue</h4>
+        <label className="flex cursor-pointer items-center gap-2">
+          <input type="checkbox" checked={payAtVenue} onChange={(e) => setPayAtVenue(e.target.checked)} className="h-4 w-4 rounded border-border" />
+          <span className="text-xs text-card-foreground">Allow customers to request a booking and pay at the venue</span>
+        </label>
+      </div>
+
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={isSaving || !hasAny}
+        className="rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+      >
+        {isSaving ? "Saving..." : "Save payment settings"}
+      </button>
+    </div>
+  );
+};
+
 interface ConfirmState {
   open: boolean;
   title: string;
@@ -579,7 +715,7 @@ const Platform = () => {
   const [tab, setTab] = useState<Tab>("overview");
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Tenant | null>(null);
-  const [formSection, setFormSection] = useState<"general" | "theme" | "subscription" | "deployment" | "media">("general");
+  const [formSection, setFormSection] = useState<"general" | "theme" | "subscription" | "deployment" | "media" | "payment">("general");
   const [form, setForm] = useState({
     name: "",
     slug: "",
@@ -1602,6 +1738,7 @@ const Platform = () => {
               {sectionBtn("general", "General", <Building2 className="h-3 w-3" />)}
               {sectionBtn("theme", "Theme & Branding", <Palette className="h-3 w-3" />)}
               {editing && sectionBtn("media", "Media (BG images)", <ImageIcon className="h-3 w-3" />)}
+              {editing && sectionBtn("payment", "Payment (bookings)", <CreditCard className="h-3 w-3" />)}
               {editing && sectionBtn("subscription", "Subscription", <CreditCard className="h-3 w-3" />)}
               {editing && sectionBtn("deployment", "Deployment", <Key className="h-3 w-3" />)}
             </div>
@@ -1756,6 +1893,11 @@ const Platform = () => {
                     <TenantReviewBgEditor tenantId={editing.id} />
                   </div>
                 </div>
+              )}
+
+              {/* PAYMENT: Tenant PayPal for booking payments */}
+              {formSection === "payment" && editing && (
+                <TenantPaymentEditor tenantId={editing.id} />
               )}
 
               {/* SUBSCRIPTION SECTION */}

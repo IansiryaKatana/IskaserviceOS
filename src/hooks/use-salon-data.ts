@@ -425,11 +425,16 @@ export function useCreateBooking() {
           
           if (existingClient) {
             clientId = existingClient.id;
-            // Update client stats
-            await supabase.rpc("increment_client_bookings", {
-              client_id: clientId,
-              amount: Number(booking.total_price) || 0,
-            }).catch(() => {}); // Silent fail
+            // Update client stats (silent fail if RPC missing or fails)
+            try {
+              const r = await supabase.rpc("increment_client_bookings", {
+                client_id: clientId,
+                amount: Number(booking.total_price) || 0,
+              });
+              if (r.error) throw r.error;
+            } catch {
+              // ignore
+            }
           } else {
             // Create new client
             const { data: newClient } = await supabase

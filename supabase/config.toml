@@ -1,1 +1,20 @@
 project_id = "mrihvwdgquzxyxklrygw"
+
+# Allow public booking page to call PayPal without login (anon JWT can still 401 in some setups)
+[functions.create-paypal-order]
+verify_jwt = false
+
+[functions.capture-paypal-order]
+verify_jwt = false
+
+[functions.create-stripe-payment-intent]
+verify_jwt = false
+
+[functions.mpesa-stk-push]
+verify_jwt = false
+
+[functions.mpesa-stk-query]
+verify_jwt = false
+
+[functions.send-booking-confirmation]
+verify_jwt = false

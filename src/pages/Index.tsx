@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -16,8 +16,11 @@ import {
 import { useTenant } from "@/hooks/use-tenant";
 import { useTenantRatingStats } from "@/hooks/use-reviews";
 import { useSiteSetting } from "@/hooks/use-site-settings";
-import { X, Clock, ArrowUpRight, ChevronRight, ChevronLeft, MapPin, User, Check, Star, CreditCard, Menu } from "lucide-react";
-import { SiApplepay, SiGooglepay, SiAfterpay } from "react-icons/si";
+import { useTenantPaymentSettings } from "@/hooks/use-tenant-payment-settings";
+import { PayPalScriptProvider, PayPalButtons } from "@paypal/react-paypal-js";
+import { loadStripe } from "@stripe/stripe-js";
+import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
+import { X, Clock, ArrowUpRight, ChevronRight, ChevronLeft, MapPin, User, Check, Star, CreditCard, Menu, Smartphone, Loader2 } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -32,6 +35,12 @@ const isValidEmail = (s: string) => s.length > 0 && EMAIL_REGEX.test(s.trim());
 const PHONE_DIGITS_MIN = 9;
 const PHONE_DIGITS_MAX = 15;
 const phoneDigitsOnly = (s: string) => s.replace(/\D/g, "");
+/** For M-Pesa: 254 + 9 digits. Strip leading 0 after country code if present (e.g. 2540715454537 → 254715454537). */
+const normalizeMpesaPhone = (s: string) => {
+  const digits = phoneDigitsOnly(s);
+  if (digits.startsWith("254") && digits.length === 12 && digits[3] === "0") return digits.slice(0, 3) + digits.slice(4);
+  return digits;
+};
 const isValidPhone = (s: string) => {
   const digits = phoneDigitsOnly(s);
   return digits.length >= PHONE_DIGITS_MIN && digits.length <= PHONE_DIGITS_MAX;
@@ -159,6 +168,66 @@ function formatTime12(t: string) {
   return `${hr}:${String(m).padStart(2, "0")} ${ampm}`;
 }
 
+const STRIPE_BOOKING_PENDING_KEY = "stripe_booking_pending";
+
+function StripePaymentForm({
+  onSuccess,
+  onCancel,
+  onBeforeConfirm,
+  amount,
+}: {
+  onSuccess: () => void;
+  onCancel: () => void;
+  onBeforeConfirm: () => void;
+  amount: number;
+}) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!stripe || !elements) return;
+    setLoading(true);
+    setError(null);
+    onBeforeConfirm();
+    const params = new URLSearchParams(window.location.search);
+    params.set("payment", "stripe");
+    const returnUrl = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
+    const { error: err } = await stripe.confirmPayment({
+      elements,
+      confirmParams: {
+        return_url: returnUrl,
+        payment_method_data: {
+          billing_details: { name: window.location.hostname },
+        },
+      },
+    });
+    setLoading(false);
+    if (err) {
+      setError(err.message || "Payment failed");
+      return;
+    }
+    onSuccess();
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <PaymentElement />
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      <div className="flex gap-2">
+        <button type="button" onClick={onCancel} className="rounded-lg border border-border px-4 py-2 text-xs font-medium hover:bg-secondary">
+          Cancel
+        </button>
+        <button type="submit" disabled={!stripe || loading} className="rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50">
+          {loading ? "Processing..." : `Pay $${amount.toFixed(2)}`}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 const Index = () => {
   const { tenant, tenantId } = useTenant();
   const { showError } = useFeedback();
@@ -168,6 +237,7 @@ const Index = () => {
   const { data: allStaff } = useStaff(tenantId);
   const { data: categories } = useServiceCategories(tenantId);
   const createBooking = useCreateBooking();
+  const tenantPayment = useTenantPaymentSettings(tenantId);
 
   const [panelOpen, setPanelOpen] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -184,8 +254,113 @@ const Index = () => {
   const [bookingForm, setBookingForm] = useState({ name: "", email: "", phone: "" });
   const [phoneCountryCode, setPhoneCountryCode] = useState(getDefaultDialCode);
   const [showConfirmation, setShowConfirmation] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<string>("");
-  const [fieldErrors, setFieldErrors] = useState<{ name?: string; email?: string; phone?: string; payment?: string; form?: string }>({});
+  const [confirmationSummary, setConfirmationSummary] = useState<{
+    serviceName: string;
+    staffName: string;
+    locationName: string;
+    bookingDate: string;
+    bookingTime: string;
+    totalPrice: number;
+  } | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ name?: string; email?: string; phone?: string; form?: string }>({});
+  const [stripeClientSecret, setStripeClientSecret] = useState<string | null>(null);
+  const stripePromise = useMemo(
+    () => (tenantPayment.stripePublishableKey ? loadStripe(tenantPayment.stripePublishableKey) : null),
+    [tenantPayment.stripePublishableKey]
+  );
+  const [mpesaPending, setMpesaPending] = useState(false);
+  const [mpesaCheckoutRequestId, setMpesaCheckoutRequestId] = useState<string | null>(null);
+  const [mpesaChecking, setMpesaChecking] = useState(false);
+  const [stripePaymentLoading, setStripePaymentLoading] = useState(false);
+  const [mpesaPushLoading, setMpesaPushLoading] = useState(false);
+
+  // After Stripe redirect: create booking from saved context and clean URL (once)
+  const stripeReturnHandled = useRef(false);
+  const locationSearch = location.search || "";
+  useEffect(() => {
+    const params = new URLSearchParams(locationSearch);
+    const payment = params.get("payment");
+    const redirectStatus = params.get("redirect_status");
+    if (payment !== "stripe" || redirectStatus !== "succeeded" || stripeReturnHandled.current) return;
+    const raw = sessionStorage.getItem(STRIPE_BOOKING_PENDING_KEY);
+    if (!raw) return;
+    stripeReturnHandled.current = true;
+    try {
+      const payload = JSON.parse(raw) as {
+        service_id: string;
+        staff_id: string;
+        location_id: string;
+        customer_name: string;
+        customer_email: string | null;
+        customer_phone: string | null;
+        booking_date: string;
+        booking_time: string;
+        total_price: number;
+        tenant_id: string;
+        service_name?: string;
+        staff_name?: string;
+        location_name?: string;
+        tenant_name?: string;
+      };
+      createBooking.mutateAsync({
+        service_id: payload.service_id,
+        staff_id: payload.staff_id,
+        location_id: payload.location_id,
+        customer_name: payload.customer_name,
+        customer_email: payload.customer_email,
+        customer_phone: payload.customer_phone,
+        booking_date: payload.booking_date,
+        booking_time: payload.booking_time,
+        total_price: payload.total_price,
+        tenant_id: payload.tenant_id,
+        status: "confirmed",
+        notes: null,
+        user_id: null,
+        metadata: null,
+      }).then(() => {
+        setShowConfirmation(true);
+        setConfirmationSummary({
+          serviceName: payload.service_name ?? "Service",
+          staffName: payload.staff_name ?? "",
+          locationName: payload.location_name ?? "",
+          bookingDate: payload.booking_date,
+          bookingTime: payload.booking_time,
+          totalPrice: payload.total_price,
+        });
+        sessionStorage.removeItem(STRIPE_BOOKING_PENDING_KEY);
+        if (payload.customer_email && "service_name" in payload && "tenant_name" in payload) {
+          supabase.functions.invoke("send-booking-confirmation", {
+            body: {
+              booking: {
+                customer_name: payload.customer_name,
+                customer_email: payload.customer_email,
+                booking_date: payload.booking_date,
+                booking_time: payload.booking_time,
+                service_name: (payload as { service_name?: string }).service_name,
+                staff_name: (payload as { staff_name?: string }).staff_name,
+                location_name: (payload as { location_name?: string }).location_name,
+                total_price: payload.total_price,
+              },
+              tenant: { name: (payload as { tenant_name?: string }).tenant_name },
+            },
+          }).catch(() => {});
+        }
+        params.delete("payment");
+        params.delete("redirect_status");
+        params.delete("payment_intent");
+        params.delete("payment_intent_client_secret");
+        const clean = params.toString() ? `?${params.toString()}` : window.location.pathname;
+        window.history.replaceState(null, "", clean);
+      }).catch((err: unknown) => {
+        showError("Booking failed", err instanceof Error ? err.message : "Could not create booking");
+        sessionStorage.removeItem(STRIPE_BOOKING_PENDING_KEY);
+        stripeReturnHandled.current = false;
+      });
+    } catch {
+      sessionStorage.removeItem(STRIPE_BOOKING_PENDING_KEY);
+      stripeReturnHandled.current = false;
+    }
+  }, [locationSearch, createBooking, showError]);
 
   // Set first category as active when loaded
   const effectiveCategory = activeCategory || categories?.[0]?.slug || null;
@@ -284,9 +459,14 @@ const Index = () => {
     setSelectedTime("");
     setBookingForm({ name: "", email: "", phone: "" });
     setPhoneCountryCode(getDefaultDialCode());
-    setPaymentMethod("");
     setFieldErrors({});
     setShowConfirmation(false);
+    setConfirmationSummary(null);
+    setMpesaPending(false);
+    setMpesaCheckoutRequestId(null);
+    setMpesaChecking(false);
+    setStripePaymentLoading(false);
+    setMpesaPushLoading(false);
     setStep("location");
   };
 
@@ -300,7 +480,6 @@ const Index = () => {
       errors.form = "Complete all steps above (location, service, specialist, date & time).";
     }
     if (!name) errors.name = "Please enter your name";
-    if (!paymentMethod) errors.payment = "Please select a payment method";
     if (email && !isValidEmail(email)) errors.email = "Enter a valid email address";
     if (phoneRaw && !isValidPhone(phoneRaw)) {
       const digits = phoneDigitsOnly(phoneRaw);
@@ -355,6 +534,53 @@ const Index = () => {
       }
     } catch {
       setFieldErrors((e) => ({ ...e, form: "Failed to create booking. Try again." }));
+    }
+  };
+
+  const doCreateBookingAfterPayment = async () => {
+    const staff = effectiveStaff ?? selectedStaff;
+    if (!selectedService || !staff || !selectedLocation || !selectedDate || !selectedTime || !tenantId) return;
+    const email = bookingForm.email?.trim() ?? "";
+    const phoneRaw = bookingForm.phone?.trim() ?? "";
+    const fullPhone = phoneRaw ? `${phoneCountryCode}${phoneDigitsOnly(phoneRaw)}` : null;
+    const customerName = bookingForm.name?.trim() ?? "";
+    try {
+      await createBooking.mutateAsync({
+        service_id: selectedService.id,
+        staff_id: staff.id,
+        location_id: selectedLocation.id,
+        customer_name: customerName,
+        customer_email: email || null,
+        customer_phone: fullPhone,
+        booking_date: selectedDate,
+        booking_time: selectedTime,
+        status: "confirmed",
+        total_price: selectedService.price,
+        notes: null,
+        user_id: null,
+        tenant_id: tenantId,
+        metadata: null,
+      });
+      setShowConfirmation(true);
+      if (email) {
+        supabase.functions.invoke("send-booking-confirmation", {
+          body: {
+            booking: {
+              customer_name: customerName,
+              customer_email: email,
+              booking_date: selectedDate,
+              booking_time: selectedTime,
+              service_name: selectedService.name,
+              staff_name: staff.name,
+              location_name: selectedLocation.name,
+              total_price: selectedService.price,
+            },
+            tenant: { name: tenant?.name },
+          },
+        }).catch(() => {});
+      }
+    } catch (err: unknown) {
+      showError("Booking failed", err instanceof Error ? err.message : "Could not create booking");
     }
   };
 
@@ -534,7 +760,7 @@ const Index = () => {
             {/* Panel content - uniform padding matching left */}
             <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 sm:p-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none]" style={{ scrollbarGutter: "stable" }}>
               {/* Confirmation view (inside same dialog) */}
-              {showConfirmation && selectedService ? (
+              {showConfirmation && (selectedService || confirmationSummary) ? (
                 <div className="animate-fade-in space-y-4">
                   <div className="flex items-center gap-3">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary">
@@ -546,12 +772,12 @@ const Index = () => {
                     </div>
                   </div>
                   <div className="space-y-2 rounded-xl border border-border bg-secondary/30 p-3 text-xs sm:p-4 sm:text-sm">
-                    <div className="flex justify-between"><span className="text-muted-foreground">Service</span><span className="font-medium">{selectedService.name}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">Specialist</span><span className="font-medium">{effectiveStaff?.name}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">Location</span><span className="font-medium">{selectedLocation?.name}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">Date</span><span className="font-medium">{selectedDate && new Date(selectedDate + "T00:00:00").toLocaleDateString("en", { weekday: "short", month: "short", day: "numeric" })}</span></div>
-                    <div className="flex justify-between"><span className="text-muted-foreground">Time</span><span className="font-medium">{selectedTime && formatTime12(selectedTime)}</span></div>
-                    <div className="flex justify-between border-t border-border pt-2"><span className="font-bold">Total</span><span className="font-bold">${Number(selectedService.price).toFixed(0)}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Service</span><span className="font-medium">{confirmationSummary?.serviceName ?? selectedService?.name}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Specialist</span><span className="font-medium">{confirmationSummary?.staffName ?? effectiveStaff?.name}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Location</span><span className="font-medium">{confirmationSummary?.locationName ?? selectedLocation?.name}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Date</span><span className="font-medium">{(confirmationSummary?.bookingDate || selectedDate) && new Date((confirmationSummary?.bookingDate || selectedDate) + "T00:00:00").toLocaleDateString("en", { weekday: "short", month: "short", day: "numeric" })}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Time</span><span className="font-medium">{confirmationSummary?.bookingTime ? formatTime12(confirmationSummary.bookingTime) : (selectedTime && formatTime12(selectedTime))}</span></div>
+                    <div className="flex justify-between border-t border-border pt-2"><span className="font-bold">Total</span><span className="font-bold">${Number(confirmationSummary?.totalPrice ?? selectedService?.price ?? 0).toFixed(0)}</span></div>
                   </div>
                   <button onClick={clearSelection} className="w-full rounded-full bg-primary px-6 py-3 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-[1.02] sm:text-sm">
                     Done
@@ -918,44 +1144,320 @@ const Index = () => {
                     )}
                   </div>
 
-                  {/* Payment method */}
+                  {/* Pay with PayPal / Stripe / M-Pesa or pay at venue */}
                   <div className="mt-4">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Payment method</p>
-                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                      {[
-                        { id: "apple_pay", label: "Apple Pay", Icon: SiApplepay },
-                        { id: "google_pay", label: "Google Pay", Icon: SiGooglepay },
-                        { id: "card", label: "Card", Icon: CreditCard },
-                        { id: "tabby", label: "Tabby", Icon: SiAfterpay },
-                        { id: "tamara", label: "Tamara", Icon: SiAfterpay },
-                      ].map((pm) => {
-                        const Icon = pm.Icon;
-                        return (
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Payment</p>
+                    {tenantPayment.hasAnyPayment ? (
+                      <div className="space-y-3">
+                    {tenantPayment.paypalClientId ? (
+                      <PayPalScriptProvider
+                        options={{
+                          clientId: tenantPayment.paypalClientId,
+                          currency: "USD",
+                          intent: "capture",
+                        }}
+                      >
+                        <PayPalButtons
+                          style={{ layout: "vertical", label: "paypal", color: "gold" }}
+                          createOrder={async () => {
+                            const name = bookingForm.name?.trim() ?? "";
+                            if (!name) {
+                              setFieldErrors((e) => ({ ...e, name: "Please enter your name" }));
+                              return Promise.reject(new Error("Please enter your name"));
+                            }
+                            const amount = Number(selectedService?.price) ?? 0;
+                            if (!amount || amount <= 0) return Promise.reject(new Error("Invalid amount"));
+                            const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+                            const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+                            const res = await fetch(`${supabaseUrl}/functions/v1/create-paypal-order`, {
+                              method: "POST",
+                              headers: {
+                                "Content-Type": "application/json",
+                                Authorization: `Bearer ${anonKey}`,
+                              },
+                              body: JSON.stringify({ amount, currency: "USD", tenant_id: tenantId }),
+                            });
+                            const body = await res.json().catch(() => ({} as { orderID?: string; error?: string }));
+                            if (!res.ok) return Promise.reject(new Error((body as { error?: string }).error ?? `Request failed (${res.status})`));
+                            const orderID = (body as { orderID?: string }).orderID;
+                            if (!orderID) return Promise.reject(new Error("No order ID"));
+                            return orderID;
+                          }}
+                          onApprove={async (data) => {
+                            const { data: captureData, error: captureError } = await supabase.functions.invoke(
+                              "capture-paypal-order",
+                              { body: { orderId: data.orderID, tenant_id: tenantId } }
+                            );
+                            if (captureError || !captureData?.success) {
+                              showError("Payment failed", captureData?.error || captureError?.message || "Could not capture payment");
+                              return;
+                            }
+                            const staff = effectiveStaff ?? selectedStaff;
+                            const email = bookingForm.email?.trim() ?? "";
+                            const phoneRaw = bookingForm.phone?.trim() ?? "";
+                            const fullPhone = phoneRaw ? `${phoneCountryCode}${phoneDigitsOnly(phoneRaw)}` : null;
+                            try {
+                              const customerName = bookingForm.name?.trim() ?? "";
+                              await createBooking.mutateAsync({
+                                service_id: selectedService!.id,
+                                staff_id: staff!.id,
+                                location_id: selectedLocation!.id,
+                                customer_name: customerName,
+                                customer_email: email || null,
+                                customer_phone: fullPhone,
+                                booking_date: selectedDate,
+                                booking_time: selectedTime,
+                                status: "confirmed",
+                                total_price: selectedService!.price,
+                                notes: null,
+                                user_id: null,
+                                tenant_id: tenantId,
+                                metadata: null,
+                              });
+                              setShowConfirmation(true);
+                              if (email) {
+                                supabase.functions.invoke("send-booking-confirmation", {
+                                  body: {
+                                    booking: {
+                                      customer_name: customerName,
+                                      customer_email: email,
+                                      booking_date: selectedDate,
+                                      booking_time: selectedTime,
+                                      service_name: selectedService?.name,
+                                      staff_name: staff?.name,
+                                      location_name: selectedLocation?.name,
+                                      total_price: selectedService?.price,
+                                    },
+                                    tenant: { name: tenant?.name },
+                                  },
+                                }).catch(() => {});
+                              }
+                            } catch (err: unknown) {
+                              showError("Booking failed", err instanceof Error ? err.message : "Could not create booking");
+                            }
+                          }}
+                          onError={(err) => {
+                            const msg = err?.message || "";
+                            if (msg.includes("Please enter your name") || msg.includes("Invalid amount")) return;
+                            showError("Payment error", msg || "Something went wrong");
+                          }}
+                        />
+                      </PayPalScriptProvider>
+                    ) : null}
+                    {tenantPayment.stripePublishableKey && (
+                      stripeClientSecret && selectedService && stripePromise ? (
+                        <div className="rounded-xl border border-border bg-card p-4">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Pay with Card</p>
+                          <Elements stripe={stripePromise} options={{ clientSecret: stripeClientSecret, appearance: { theme: "stripe" } }}>
+                            <StripePaymentForm
+                              amount={Number(selectedService.price) ?? 0}
+                              onBeforeConfirm={() => {
+                                const staff = effectiveStaff ?? selectedStaff;
+                                if (!staff || !selectedLocation) return;
+                                const fullPhone = bookingForm.phone?.trim()
+                                  ? `${phoneCountryCode}${phoneDigitsOnly(bookingForm.phone)}`
+                                  : null;
+                                const payload = {
+                                  service_id: selectedService.id,
+                                  staff_id: staff.id,
+                                  location_id: selectedLocation.id,
+                                  customer_name: bookingForm.name?.trim() ?? "",
+                                  customer_email: bookingForm.email?.trim() || null,
+                                  customer_phone: fullPhone,
+                                  booking_date: selectedDate,
+                                  booking_time: selectedTime,
+                                  total_price: selectedService.price,
+                                  tenant_id: tenantId ?? "",
+                                  service_name: selectedService.name,
+                                  staff_name: staff.name,
+                                  location_name: selectedLocation.name,
+                                  tenant_name: tenant?.name ?? "",
+                                };
+                                sessionStorage.setItem(STRIPE_BOOKING_PENDING_KEY, JSON.stringify(payload));
+                              }}
+                              onSuccess={async () => {
+                                setStripeClientSecret(null);
+                                await doCreateBookingAfterPayment();
+                              }}
+                              onCancel={() => setStripeClientSecret(null)}
+                            />
+                          </Elements>
+                        </div>
+                      ) : (
                         <button
-                          key={pm.id}
                           type="button"
-                          onClick={() => { setPaymentMethod(pm.id); setFieldErrors((e) => ({ ...e, payment: undefined })); }}
-                          className={`flex flex-col items-center gap-1 rounded-xl border px-3 py-2.5 text-[11px] font-medium transition-all sm:text-xs ${
-                            paymentMethod === pm.id ? "border-primary bg-primary/5 text-primary" : "border-border hover:border-primary/40"
-                          }`}
+                          disabled={stripePaymentLoading}
+                          onClick={async () => {
+                            const name = bookingForm.name?.trim() ?? "";
+                            if (!name) {
+                              setFieldErrors((e) => ({ ...e, name: "Please enter your name" }));
+                              return;
+                            }
+                            const amount = Number(selectedService?.price) ?? 0;
+                            if (!amount || amount <= 0) return;
+                            setStripePaymentLoading(true);
+                            try {
+                              const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+                              const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+                              const res = await fetch(`${supabaseUrl}/functions/v1/create-stripe-payment-intent`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json", Authorization: `Bearer ${anonKey}` },
+                                body: JSON.stringify({ amount, currency: "usd", tenant_id: tenantId }),
+                              });
+                              const data = await res.json().catch(() => ({}));
+                              if (!res.ok) {
+                                showError("Payment", (data as { error?: string }).error ?? "Could not start payment");
+                                return;
+                              }
+                              setStripeClientSecret((data as { clientSecret?: string }).clientSecret ?? null);
+                            } finally {
+                              setStripePaymentLoading(false);
+                            }
+                          }}
+                          className="flex w-full items-center justify-center gap-2 rounded-xl border-0 py-3 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:brightness-110 hover:scale-[1.02] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:scale-100 disabled:hover:brightness-100 sm:text-base"
+                          style={{ backgroundColor: "#635BFF" }}
                         >
-                          <Icon className="h-5 w-5 shrink-0" />
-                          {pm.label}
+                          {stripePaymentLoading ? (
+                            <Loader2 className="h-5 w-5 shrink-0 animate-spin" aria-hidden />
+                          ) : (
+                            <CreditCard className="h-5 w-5 shrink-0" />
+                          )}
+                          {stripePaymentLoading ? "Loading…" : "Pay with Card"}
                         </button>
-                        );
-                      })}
-                    </div>
-                    {fieldErrors.payment && <p className="mt-1 text-[10px] text-destructive">{fieldErrors.payment}</p>}
+                      )
+                    )}
+                    {tenantPayment.mpesaConfigured && (
+                      <div className="space-y-2">
+                        {!mpesaPending ? (
+                          <button
+                            type="button"
+                            disabled={mpesaPushLoading}
+                            onClick={async () => {
+                              const name = bookingForm.name?.trim() ?? "";
+                              if (!name) {
+                                setFieldErrors((e) => ({ ...e, name: "Please enter your name" }));
+                                return;
+                              }
+                              const amount = Number(selectedService?.price) ?? 0;
+                              if (!amount || amount <= 0) return;
+                              const phone = phoneDigitsOnly(bookingForm.phone ?? "");
+                              if (phone.length < 9) {
+                                showError("M-Pesa", "Enter a valid phone number for M-Pesa");
+                                return;
+                              }
+                              setMpesaPushLoading(true);
+                              try {
+                                const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+                                const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+                                const res = await fetch(`${supabaseUrl}/functions/v1/mpesa-stk-push`, {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json", Authorization: `Bearer ${anonKey}` },
+                                  body: JSON.stringify({ tenant_id: tenantId, amount, phone: normalizeMpesaPhone(phoneCountryCode + (bookingForm.phone ?? "")) }),
+                                });
+                                const data = await res.json().catch(() => ({}));
+                                if (!res.ok || !(data as { success?: boolean }).success) {
+                                  showError("M-Pesa", (data as { error?: string }).error ?? "Could not send prompt");
+                                  return;
+                                }
+                                const cid = (data as { checkoutRequestID?: string }).checkoutRequestID ?? null;
+                                setMpesaCheckoutRequestId(cid);
+                                setMpesaPending(true);
+                              } finally {
+                                setMpesaPushLoading(false);
+                              }
+                            }}
+                            className="flex w-full items-center justify-center gap-2 rounded-xl border-0 py-3 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:brightness-110 hover:scale-[1.02] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:scale-100 disabled:hover:brightness-100 sm:text-base"
+                            style={{ backgroundColor: "#00A650" }}
+                          >
+                            {mpesaPushLoading ? (
+                              <Loader2 className="h-5 w-5 shrink-0 animate-spin" aria-hidden />
+                            ) : (
+                              <Smartphone className="h-5 w-5 shrink-0" />
+                            )}
+                            {mpesaPushLoading ? "Sending…" : "Pay with M-Pesa"}
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={!mpesaCheckoutRequestId || mpesaChecking}
+                            onClick={async () => {
+                              if (!mpesaCheckoutRequestId || mpesaChecking) return;
+                              setMpesaChecking(true);
+                              try {
+                                const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+                                const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+                                const res = await fetch(`${supabaseUrl}/functions/v1/mpesa-stk-query`, {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json", Authorization: `Bearer ${anonKey}` },
+                                  body: JSON.stringify({ tenant_id: tenantId, checkout_request_id: mpesaCheckoutRequestId }),
+                                });
+                                const data = await res.json().catch(() => ({}));
+                                const paid = (data as { paid?: boolean }).paid === true;
+                                if (!paid) {
+                                  showError(
+                                    "M-Pesa",
+                                    (data as { error?: string }).error ?? (data as { resultDesc?: string }).resultDesc ?? "Payment not received yet. Complete the M-Pesa prompt on your phone, then try again."
+                                  );
+                                  return;
+                                }
+                                setMpesaPending(false);
+                                setMpesaCheckoutRequestId(null);
+                                await doCreateBookingAfterPayment();
+                              } finally {
+                                setMpesaChecking(false);
+                              }
+                            }}
+                            className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-all duration-200 hover:scale-[1.02] hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:scale-100 disabled:hover:brightness-100 sm:text-sm"
+                          >
+                            {mpesaChecking ? (
+                              <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                            ) : (
+                              <Check className="h-4 w-4" />
+                            )}
+                            {mpesaChecking ? "Checking payment…" : "I've paid – confirm booking"}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {tenantPayment.payAtVenueEnabled && (
+                      <button
+                        onClick={handleBooking}
+                        disabled={createBooking.isPending || !bookingForm.name?.trim()}
+                        className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-all duration-200 hover:scale-[1.02] hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:scale-100 disabled:hover:brightness-100 sm:text-sm"
+                      >
+                        {createBooking.isPending ? (
+                          <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                        ) : (
+                          <Check className="h-4 w-4" />
+                        )}
+                        {createBooking.isPending ? "Booking…" : "Request booking (pay at venue)"}
+                      </button>
+                    )}
+                      </div>
+                    ) : tenantPayment.payAtVenueEnabled ? (
+                      <>
+                        <p className="mb-3 text-xs text-muted-foreground">
+                          Online payment is not set up. You can request a booking and pay at the venue.
+                        </p>
+                        <button
+                          onClick={handleBooking}
+                          disabled={createBooking.isPending || !bookingForm.name?.trim()}
+                          className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-all duration-200 hover:scale-[1.02] hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:scale-100 disabled:hover:brightness-100 sm:text-sm"
+                        >
+                          {createBooking.isPending ? (
+                            <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                          ) : (
+                            <Check className="h-4 w-4" />
+                          )}
+                          {createBooking.isPending ? "Booking…" : "Request booking (pay at venue)"}
+                        </button>
+                      </>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">
+                        No payment options are available for this business. Please contact them to book.
+                      </p>
+                    )}
                   </div>
-
-                  <button
-                    onClick={handleBooking}
-                    disabled={createBooking.isPending || !bookingForm.name?.trim() || !paymentMethod}
-                    className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-[1.02] disabled:opacity-50 sm:text-sm"
-                  >
-                    {createBooking.isPending ? "Booking..." : "Confirm booking"}
-                    <Check className="h-4 w-4" />
-                  </button>
                 </div>
               )}
               </>

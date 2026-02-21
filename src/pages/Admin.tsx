@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useTenant } from "@/hooks/use-tenant";
 import { TenantSwitcher } from "@/components/TenantSwitcher";
@@ -22,15 +22,16 @@ import { usePosSales, useCompletePosSale, usePosSaleStats, type PosCartItem } fr
 import { useIsPlatformAdmin } from "@/hooks/use-user-roles";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts";
-import { Plus, Edit2, Trash2, ArrowUpRight, Scissors, Calendar, ChevronDown, MapPin, Users, Upload, Tag, Clock, BarChart3, UserCircle, CreditCard, Package, ShoppingCart, Minus, X, DollarSign, Receipt, Search } from "lucide-react";
+import { Plus, Edit2, Trash2, ArrowUpRight, Scissors, Calendar, ChevronDown, MapPin, Users, Upload, Tag, Clock, BarChart3, UserCircle, CreditCard, Package, ShoppingCart, Minus, X, DollarSign, Receipt, Search, Settings } from "lucide-react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { RecordsPagination } from "@/components/RecordsPagination";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { useFeedback } from "@/hooks/use-feedback";
+import { useTenantPaymentSettingsForm } from "@/hooks/use-tenant-payment-settings";
 import { usePagination } from "@/hooks/use-pagination";
 
-type Tab = "analytics" | "services" | "bookings" | "locations" | "staff" | "categories" | "schedules" | "clients" | "payments" | "inventory" | "pos";
+type Tab = "analytics" | "services" | "bookings" | "locations" | "staff" | "categories" | "schedules" | "clients" | "payments" | "inventory" | "pos" | "settings";
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -172,6 +173,27 @@ const Admin = () => {
   const bookingsPag = usePagination(bookings, 6);
   const clientsPag = usePagination(clients, 6);
   const paymentsPag = usePagination(payments, 6);
+
+  const tenantPaymentForm = useTenantPaymentSettingsForm(tenantId);
+  const [settingsPaypalClientId, setSettingsPaypalClientId] = useState("");
+  const [settingsPaypalSecret, setSettingsPaypalSecret] = useState("");
+  const [settingsStripePk, setSettingsStripePk] = useState("");
+  const [settingsStripeSecret, setSettingsStripeSecret] = useState("");
+  const [settingsMpesaKey, setSettingsMpesaKey] = useState("");
+  const [settingsMpesaSecret, setSettingsMpesaSecret] = useState("");
+  const [settingsMpesaShortcode, setSettingsMpesaShortcode] = useState("");
+  const [settingsMpesaPasskey, setSettingsMpesaPasskey] = useState("");
+  const [settingsPayAtVenue, setSettingsPayAtVenue] = useState(true);
+  useEffect(() => {
+    if (tab === "settings") {
+      setSettingsPaypalClientId(tenantPaymentForm.paypalClientId || "");
+      setSettingsStripePk(tenantPaymentForm.stripePublishableKey || "");
+      setSettingsMpesaKey(tenantPaymentForm.mpesaConsumerKey || "");
+      setSettingsMpesaShortcode(tenantPaymentForm.mpesaShortcode || "");
+      setSettingsPayAtVenue(tenantPaymentForm.payAtVenueEnabled);
+    }
+  }, [tab, tenantPaymentForm.paypalClientId, tenantPaymentForm.stripePublishableKey, tenantPaymentForm.mpesaConsumerKey, tenantPaymentForm.mpesaShortcode, tenantPaymentForm.payAtVenueEnabled]);
+
   const stockItemsPag = usePagination(stockItems, 6);
   const locationsPag = usePagination(locations, 6);
   const staffPag = usePagination(staff, 6);
@@ -367,6 +389,7 @@ const Admin = () => {
     { key: "locations", label: "Locations", icon: <MapPin className="h-3.5 w-3.5" /> },
     { key: "staff", label: "Staff", icon: <Users className="h-3.5 w-3.5" /> },
     { key: "schedules", label: "Schedules", icon: <Clock className="h-3.5 w-3.5" /> },
+    { key: "settings", label: "Settings", icon: <Settings className="h-3.5 w-3.5" /> },
   ];
 
   const inputCls = "mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm";
@@ -1033,6 +1056,97 @@ const Admin = () => {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {/* ========= SETTINGS (Payment for bookings) ========= */}
+        {tab === "settings" && (
+          <div>
+            <h2 className="font-display text-lg font-bold text-foreground sm:text-xl mb-4 sm:mb-6">Payment settings</h2>
+            <p className="text-xs text-muted-foreground mb-4">
+              Add credentials for any option you want to accept. Once set, that option goes live on your booking page. Funds go to your account.
+            </p>
+            <div className="max-w-md space-y-6">
+              <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+                <h3 className="text-sm font-semibold text-card-foreground">PayPal</h3>
+                <div>
+                  <label className={labelCls}>PayPal Client ID</label>
+                  <input type="text" value={settingsPaypalClientId} onChange={(e) => setSettingsPaypalClientId(e.target.value)} placeholder="From PayPal Developer Dashboard" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>PayPal Client Secret (optional)</label>
+                  <input type="password" value={settingsPaypalSecret} onChange={(e) => setSettingsPaypalSecret(e.target.value)} placeholder="Leave blank to keep existing" className={inputCls} autoComplete="off" />
+                </div>
+              </div>
+              <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+                <h3 className="text-sm font-semibold text-card-foreground">Stripe (card)</h3>
+                <div>
+                  <label className={labelCls}>Stripe Publishable Key (pk_...)</label>
+                  <input type="text" value={settingsStripePk} onChange={(e) => setSettingsStripePk(e.target.value)} placeholder="pk_test_... or pk_live_..." className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Stripe Secret Key (optional)</label>
+                  <input type="password" value={settingsStripeSecret} onChange={(e) => setSettingsStripeSecret(e.target.value)} placeholder="sk_... Leave blank to keep existing" className={inputCls} autoComplete="off" />
+                </div>
+              </div>
+              <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+                <h3 className="text-sm font-semibold text-card-foreground">M-Pesa</h3>
+                <div>
+                  <label className={labelCls}>Consumer Key</label>
+                  <input type="text" value={settingsMpesaKey} onChange={(e) => setSettingsMpesaKey(e.target.value)} placeholder="From Safaricom Daraja" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Consumer Secret (optional)</label>
+                  <input type="password" value={settingsMpesaSecret} onChange={(e) => setSettingsMpesaSecret(e.target.value)} placeholder="Leave blank to keep existing" className={inputCls} autoComplete="off" />
+                </div>
+                <div>
+                  <label className={labelCls}>Shortcode (Till / Paybill)</label>
+                  <p className="mb-1 text-xs text-muted-foreground">Sandbox: use test shortcode from Daraja docs (e.g. 174379). Production: your M-Pesa Paybill or Till number.</p>
+                  <input type="text" value={settingsMpesaShortcode} onChange={(e) => setSettingsMpesaShortcode(e.target.value)} placeholder="e.g. 174379" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Passkey (optional)</label>
+                  <p className="mb-1 text-xs text-muted-foreground">From Daraja: Lipa Na M-Pesa Online (LNM) for your shortcode. Sandbox test passkey is in the Daraja STK Push docs.</p>
+                  <input type="password" value={settingsMpesaPasskey} onChange={(e) => setSettingsMpesaPasskey(e.target.value)} placeholder="Lipa Na M-Pesa passkey" className={inputCls} autoComplete="off" />
+                </div>
+              </div>
+              <div className="rounded-xl border border-border bg-card p-4">
+                <h3 className="text-sm font-semibold text-card-foreground mb-2">Pay at venue</h3>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input type="checkbox" checked={settingsPayAtVenue} onChange={(e) => setSettingsPayAtVenue(e.target.checked)} className="h-4 w-4 rounded border-border" />
+                  <span className="text-xs text-card-foreground">Allow customers to request a booking and pay at the venue</span>
+                </label>
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await tenantPaymentForm.save({
+                      paypalClientId: settingsPaypalClientId.trim(),
+                      paypalClientSecret: settingsPaypalSecret.trim() || undefined,
+                      stripePublishableKey: settingsStripePk.trim(),
+                      stripeSecretKey: settingsStripeSecret.trim() || undefined,
+                      mpesaConsumerKey: settingsMpesaKey.trim(),
+                      mpesaConsumerSecret: settingsMpesaSecret.trim() || undefined,
+                      mpesaShortcode: settingsMpesaShortcode.trim(),
+                      mpesaPasskey: settingsMpesaPasskey.trim() || undefined,
+                      payAtVenueEnabled: settingsPayAtVenue,
+                    });
+                    setSettingsPaypalSecret("");
+                    setSettingsStripeSecret("");
+                    setSettingsMpesaSecret("");
+                    setSettingsMpesaPasskey("");
+                    showSuccess("Saved", "Payment settings saved.");
+                  } catch (e) {
+                    showError("Failed", e instanceof Error ? e.message : "Could not save.");
+                  }
+                }}
+                disabled={tenantPaymentForm.isSaving}
+                className="rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              >
+                {tenantPaymentForm.isSaving ? "Saving..." : "Save payment settings"}
+              </button>
+            </div>
           </div>
         )}
 

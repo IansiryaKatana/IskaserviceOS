@@ -37,8 +37,8 @@ export function useSiteSetting(key: string, tenantId?: string | null) {
       } else {
         query = query.is("tenant_id", null);
       }
-      const { data, error } = await query.single();
-      if (error && error.code !== "PGRST116") throw error; // PGRST116 = not found
+      const { data, error } = await query.maybeSingle();
+      if (error) throw error;
       return (data as SiteSetting) || null;
     },
   });
@@ -94,7 +94,7 @@ export function useUpsertSiteSetting() {
       } else {
         query = query.is("tenant_id", null);
       }
-      const { data: existing } = await query.single();
+      const { data: existing } = await query.maybeSingle();
 
       if (existing) {
         // Update

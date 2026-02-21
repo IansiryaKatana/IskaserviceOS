@@ -8,12 +8,14 @@ const corsHeaders = {
 };
 
 serve(async (req) => {
+  // Preflight: return 200 so gateways/proxies treat as OK (CORS)
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: corsHeaders });
+    return new Response(null, { status: 200, headers: corsHeaders });
   }
 
   try {
-    const { booking, tenant } = await req.json();
+    const body = await req.json().catch(() => ({}));
+    const { booking, tenant } = body as { booking?: unknown; tenant?: unknown };
     
     if (!booking?.customer_email) {
       return new Response(
@@ -75,8 +77,9 @@ serve(async (req) => {
     );
   } catch (error) {
     console.error("Error sending confirmation:", error);
+    const msg = error instanceof Error ? error.message : "Server error";
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ error: msg }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
