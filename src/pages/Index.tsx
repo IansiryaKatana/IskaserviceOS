@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import {
   useServices,
@@ -18,7 +18,73 @@ import { useTenantRatingStats } from "@/hooks/use-reviews";
 import { X, Clock, ChevronRight, ChevronLeft, MapPin, User, Check, Star, CreditCard } from "lucide-react";
 import { SiApplepay, SiGooglepay, SiAfterpay } from "react-icons/si";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { TypingText } from "@/components/TypingText";
 import { useFeedback } from "@/hooks/use-feedback";
+
+// Email validation
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const isValidEmail = (s: string) => s.length > 0 && EMAIL_REGEX.test(s.trim());
+
+// Phone: digits only, 9–15 digits (national number)
+const PHONE_DIGITS_MIN = 9;
+const PHONE_DIGITS_MAX = 15;
+const phoneDigitsOnly = (s: string) => s.replace(/\D/g, "");
+const isValidPhone = (s: string) => {
+  const digits = phoneDigitsOnly(s);
+  return digits.length >= PHONE_DIGITS_MIN && digits.length <= PHONE_DIGITS_MAX;
+};
+
+// Country codes for phone. Dial code + ISO 3166-1 alpha-2 for flag image (FlagCDN).
+const COUNTRY_CODES = [
+  { code: "+971", country: "AE" },
+  { code: "+966", country: "SA" },
+  { code: "+1", country: "US" },
+  { code: "+44", country: "GB" },
+  { code: "+91", country: "IN" },
+  { code: "+49", country: "DE" },
+  { code: "+33", country: "FR" },
+  { code: "+61", country: "AU" },
+  { code: "+81", country: "JP" },
+  { code: "+86", country: "CN" },
+  { code: "+234", country: "NG" },
+  { code: "+254", country: "KE" },
+  { code: "+27", country: "ZA" },
+  { code: "+20", country: "EG" },
+  { code: "+972", country: "IL" },
+  { code: "+90", country: "TR" },
+  { code: "+39", country: "IT" },
+  { code: "+34", country: "ES" },
+  { code: "+31", country: "NL" },
+  { code: "+32", country: "BE" },
+  { code: "+41", country: "CH" },
+  { code: "+43", country: "AT" },
+  { code: "+48", country: "PL" },
+  { code: "+55", country: "BR" },
+  { code: "+52", country: "MX" },
+  { code: "+54", country: "AR" },
+  { code: "+57", country: "CO" },
+  { code: "+60", country: "MY" },
+  { code: "+65", country: "SG" },
+  { code: "+66", country: "TH" },
+  { code: "+84", country: "VN" },
+  { code: "+62", country: "ID" },
+  { code: "+63", country: "PH" },
+  { code: "+64", country: "NZ" },
+];
+
+// FlagCDN: free, no API key. 3:2 ratio flag image.
+const getFlagSrc = (countryCode: string) =>
+  `https://flagcdn.com/w40/${countryCode.toLowerCase()}.png`;
+
+// Detect default country from browser locale (e.g. en-AE -> +971). Fallback to UAE.
+function getDefaultDialCode(): string {
+  if (typeof navigator === "undefined") return "+971";
+  const locale = navigator.language || (navigator.languages && navigator.languages[0]) || "";
+  const region = locale.split("-")[1]?.toUpperCase();
+  const match = COUNTRY_CODES.find((c) => c.country === region);
+  return match ? match.code : "+971";
+}
 
 const defaultDesktopBg = "/images/hero-1.jpg";
 const defaultMobileBg = "/images/hero-2.jpg";
@@ -93,14 +159,15 @@ function formatTime12(t: string) {
 
 const Index = () => {
   const { tenant, tenantId } = useTenant();
-  const { showSuccess, showError } = useFeedback();
+  const { showError } = useFeedback();
+  const location = useLocation();
   const { data: services } = useServices(tenantId);
   const { data: locations } = useLocations(tenantId);
   const { data: allStaff } = useStaff(tenantId);
   const { data: categories } = useServiceCategories(tenantId);
   const createBooking = useCreateBooking();
 
-  const [panelOpen, setPanelOpen] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(true);
   const [step, setStep] = useState<Step>("location");
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
 
@@ -110,9 +177,12 @@ const Index = () => {
   const [anyProfessional, setAnyProfessional] = useState(false);
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedTime, setSelectedTime] = useState("");
+  const [dateWindowOffset, setDateWindowOffset] = useState(0); // days from today for start of 14-day window
   const [bookingForm, setBookingForm] = useState({ name: "", email: "", phone: "" });
+  const [phoneCountryCode, setPhoneCountryCode] = useState(getDefaultDialCode);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<string>("");
+  const [fieldErrors, setFieldErrors] = useState<{ name?: string; email?: string; phone?: string; payment?: string; form?: string }>({});
 
   // Set first category as active when loaded
   const effectiveCategory = activeCategory || categories?.[0]?.slug || null;
@@ -175,17 +245,17 @@ const Index = () => {
     return filteredStaff.find((s) => staffIds.includes(s.id)) ?? null;
   }, [selectedStaff, anyProfessional, selectedDate, selectedTime, filteredStaff, availableSlots]);
 
-  // Next 14 days
+  // 14-day window; offset moves the window (0 = today..+13, 14 = +14..+27, etc.)
   const dateOptions = useMemo(() => {
     const dates: string[] = [];
     const today = new Date();
+    const startDay = today.getDate() + dateWindowOffset;
     for (let i = 0; i < 14; i++) {
-      const d = new Date(today);
-      d.setDate(today.getDate() + i);
+      const d = new Date(today.getFullYear(), today.getMonth(), startDay + i);
       dates.push(d.toISOString().split("T")[0]);
     }
     return dates;
-  }, []);
+  }, [dateWindowOffset]);
 
   // Background image - use business type background, fallback to service images or defaults
   const businessTypeBg = getBusinessTypeBackground(tenant?.business_type);
@@ -208,29 +278,47 @@ const Index = () => {
     setSelectedDate("");
     setSelectedTime("");
     setBookingForm({ name: "", email: "", phone: "" });
+    setPhoneCountryCode(getDefaultDialCode());
     setPaymentMethod("");
+    setFieldErrors({});
     setShowConfirmation(false);
     setStep("location");
   };
 
   const handleBooking = async () => {
-    const staff = effectiveStaff;
-    if (!selectedService || !staff || !selectedLocation || !bookingForm.name || !selectedDate || !selectedTime) {
-      showError("Required", "Please complete all required fields");
+    const name = bookingForm.name?.trim() ?? "";
+    const staff = effectiveStaff ?? selectedStaff;
+    const email = bookingForm.email?.trim() ?? "";
+    const phoneRaw = bookingForm.phone?.trim() ?? "";
+    const errors: typeof fieldErrors = {};
+    if (!selectedLocation || !selectedService || !staff || !selectedDate || !selectedTime) {
+      errors.form = "Complete all steps above (location, service, specialist, date & time).";
+    }
+    if (!name) errors.name = "Please enter your name";
+    if (!paymentMethod) errors.payment = "Please select a payment method";
+    if (email && !isValidEmail(email)) errors.email = "Enter a valid email address";
+    if (phoneRaw && !isValidPhone(phoneRaw)) {
+      const digits = phoneDigitsOnly(phoneRaw);
+      errors.phone = digits.length < PHONE_DIGITS_MIN
+        ? `At least ${PHONE_DIGITS_MIN} digits`
+        : `No more than ${PHONE_DIGITS_MAX} digits`;
+    }
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
       return;
     }
-    if (!paymentMethod) {
-      showError("Payment", "Please select a payment method");
-      return;
-    }
+    setFieldErrors({});
+    const fullPhone = phoneRaw
+      ? `${phoneCountryCode}${phoneDigitsOnly(phoneRaw)}`
+      : null;
     try {
       await createBooking.mutateAsync({
         service_id: selectedService.id,
         staff_id: staff.id,
         location_id: selectedLocation.id,
-        customer_name: bookingForm.name,
-        customer_email: bookingForm.email || null,
-        customer_phone: bookingForm.phone || null,
+        customer_name: name,
+        customer_email: email || null,
+        customer_phone: fullPhone,
         booking_date: selectedDate,
         booking_time: selectedTime,
         status: "pending",
@@ -241,15 +329,14 @@ const Index = () => {
         metadata: null,
       });
       setShowConfirmation(true);
-      showSuccess("Booking confirmed", "Your booking has been confirmed.");
 
       // Send confirmation email (fire-and-forget)
-      if (bookingForm.email) {
+      if (email) {
         supabase.functions.invoke("send-booking-confirmation", {
           body: {
             booking: {
-              customer_name: bookingForm.name,
-              customer_email: bookingForm.email,
+              customer_name: name,
+              customer_email: email,
               booking_date: selectedDate,
               booking_time: selectedTime,
               total_price: selectedService.price,
@@ -262,7 +349,7 @@ const Index = () => {
         }).catch(() => {}); // silent fail for email
       }
     } catch {
-      showError("Failed", "Failed to create booking");
+      setFieldErrors((e) => ({ ...e, form: "Failed to create booking. Try again." }));
     }
   };
 
@@ -309,9 +396,17 @@ const Index = () => {
           )}
         </a>
         <nav className="hidden gap-2 rounded-full bg-white/10 backdrop-blur-md shadow-lg px-3 py-2 font-body text-xs font-medium uppercase tracking-widest text-hero-muted md:flex">
-          <button onClick={() => { setPanelOpen(true); setStep("service"); }} className="rounded-full px-4 py-2 uppercase hover:text-hero-foreground transition-colors">SERVICES</button>
+          <button
+            onClick={() => { setPanelOpen(true); setStep("service"); }}
+            className={`rounded-full px-4 py-2 uppercase transition-colors hover:text-hero-foreground ${panelOpen ? "bg-white/20 text-hero-foreground" : ""}`}
+          >
+            SERVICES
+          </button>
           {tenant?.slug && (
-            <Link to={`/t/${tenant.slug}/reviews`} className="rounded-full px-4 py-2 hover:text-hero-foreground transition-colors flex items-center gap-1">
+            <Link
+              to={`/t/${tenant.slug}/reviews`}
+              className={`rounded-full px-4 py-2 flex items-center gap-1 transition-colors hover:text-hero-foreground ${location.pathname === `/t/${tenant.slug}/reviews` ? "bg-white/20 text-hero-foreground" : ""}`}
+            >
               Reviews
               {ratingStats && ratingStats.average_rating > 0 && (
                 <span className="flex items-center gap-0.5 text-[10px]">
@@ -321,7 +416,12 @@ const Index = () => {
               )}
             </Link>
           )}
-          <a href="/account" className="rounded-full px-4 py-2 hover:text-hero-foreground transition-colors">Account</a>
+          <a
+            href="/account"
+            className={`rounded-full px-4 py-2 transition-colors hover:text-hero-foreground ${location.pathname === "/account" ? "bg-white/20 text-hero-foreground" : ""}`}
+          >
+            Account
+          </a>
         </nav>
         <button
           onClick={() => setPanelOpen(true)}
@@ -335,12 +435,17 @@ const Index = () => {
       <main className="relative z-10 flex min-h-[calc(100vh-80px)] flex-col justify-end px-6 pb-12 sm:px-10 sm:pb-20 lg:px-12 lg:pb-24">
         <div className="max-w-2xl">
           <h1 className="font-display text-3xl font-bold leading-tight text-hero-foreground sm:text-5xl lg:text-6xl">
-            {getTenantTitle(tenant?.business_type)}
+            <TypingText
+              text={getTenantTitle(tenant?.business_type)}
+              speed={42}
+              cursor
+              className="inline"
+            />
           </h1>
-          <p className="mt-4 text-xs font-medium uppercase tracking-widest text-hero-muted sm:text-sm">
+          <p className="mt-4 text-xs font-medium uppercase tracking-widest text-hero-muted sm:text-sm animate-fade-in-up-delay-desc">
             {getTenantDescription(tenant?.business_type)}
           </p>
-          <div className="mt-6 flex flex-wrap gap-3">
+          <div className="mt-6 flex flex-wrap gap-3 animate-fade-in-up-delay-btn">
             <button
               onClick={() => setPanelOpen(true)}
               className="rounded-full bg-primary px-6 py-3 text-sm font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-105"
@@ -355,19 +460,32 @@ const Index = () => {
       <Dialog open={panelOpen} onOpenChange={setPanelOpen}>
         <DialogContent hideOverlay closeButtonClassName="absolute right-4 top-4 sm:right-5 rounded-lg bg-muted p-1.5 hover:bg-muted/80 data-[state=open]:!bg-muted" className="booking-dialog animate-none left-auto right-6 top-20 bottom-6 z-[100] flex w-full max-w-[calc(28rem-60px)] translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-l-xl border-0 border-l bg-card p-0 shadow-2xl sm:right-10 sm:top-24 sm:bottom-8 sm:max-w-[calc(32rem-60px)] md:top-32 md:bottom-10 lg:right-12 lg:top-36 lg:bottom-12">
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            {/* Panel header */}
-            <div className="flex min-w-0 shrink-0 items-center justify-between overflow-hidden p-4 sm:p-5">
-              <div className="flex items-center gap-2">
-                {!showConfirmation && stepIdx > 0 && (
-                  <button onClick={goBack} className="rounded-lg bg-muted p-1.5 text-muted-foreground hover:bg-muted/80 hover:text-card-foreground">
-                    <ChevronLeft className="h-4 w-4" />
-                  </button>
-                )}
-                <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
-                  {showConfirmation ? "Confirmed" : STEP_LABELS[step]}
-                </h3>
+            {/* Panel header: location step = title left; other steps = back left, title centered */}
+            {step === "location" ? (
+              <div className="flex min-w-0 shrink-0 items-center justify-between overflow-hidden p-4 sm:p-5">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
+                    {STEP_LABELS[step]}
+                  </h3>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="relative flex min-w-0 shrink-0 items-center justify-between overflow-hidden p-4 sm:p-5">
+                <div className="flex w-10 shrink-0 items-center sm:w-12">
+                  {!showConfirmation && stepIdx > 0 && (
+                    <button onClick={goBack} className="rounded-lg bg-muted p-1.5 text-muted-foreground hover:bg-muted/80 hover:text-card-foreground">
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+                <div className="absolute left-0 right-0 flex justify-center pointer-events-none">
+                  <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
+                    {showConfirmation ? "Confirmed" : STEP_LABELS[step]}
+                  </h3>
+                </div>
+                <div className="w-10 shrink-0 sm:w-12" aria-hidden />
+              </div>
+            )}
 
             {/* Panel content - uniform padding matching left */}
             <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 sm:p-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none]" style={{ scrollbarGutter: "stable" }}>
@@ -404,12 +522,14 @@ const Index = () => {
                   {locations?.map((loc) => (
                     <button
                       key={loc.id}
-                      onClick={() => { setSelectedLocation(loc); goNext(); }}
+                      onClick={() => setSelectedLocation(loc)}
                       className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-all sm:p-4 ${
-                        selectedLocation?.id === loc.id ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"
+                        selectedLocation?.id === loc.id
+                          ? "border-primary bg-primary text-primary-foreground [&_.text-card-foreground]:text-primary-foreground [&_.text-primary]:text-primary-foreground [&_.text-muted-foreground]:text-primary-foreground/90"
+                          : "border-border hover:border-primary/40"
                       }`}
                     >
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                      <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${selectedLocation?.id === loc.id ? "bg-primary-foreground/20 text-primary-foreground" : "bg-primary/10 text-primary"}`}>
                         <MapPin className="h-4 w-4" />
                       </div>
                       <div className="min-w-0 flex-1">
@@ -417,7 +537,9 @@ const Index = () => {
                         <p className="text-[11px] text-muted-foreground truncate">{loc.address}, {loc.city}</p>
                         {loc.phone && <p className="text-[10px] text-muted-foreground">{loc.phone}</p>}
                       </div>
-                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
+                        <ChevronRight className="h-4 w-4" />
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -453,14 +575,14 @@ const Index = () => {
                   {/* Selected service or service list */}
                   {selectedService ? (
                     <div className="animate-fade-in">
-                      <div className="rounded-xl border border-primary bg-primary/5 p-3 sm:p-4">
+                      <div className="rounded-xl border border-primary bg-primary text-primary-foreground p-3 sm:p-4 [&_.text-card-foreground]:text-primary-foreground [&_.text-muted-foreground]:text-primary-foreground/90">
                         <div className="flex items-start justify-between">
                           <div>
                             <div className="flex items-center gap-2">
                               <p className="text-sm font-semibold text-card-foreground">{selectedService.name}</p>
                               <span
-                                className="rounded-full px-2 py-0.5 text-[9px] font-bold uppercase text-white"
-                                style={{ backgroundColor: getCategoryColor(selectedService.category) || "hsl(var(--primary))" }}
+                                className="rounded-full px-2 py-0.5 text-[9px] font-bold uppercase text-primary-foreground opacity-90"
+                                style={{ backgroundColor: "hsl(var(--primary-foreground) / 0.25)" }}
                               >
                                 {selectedService.category}
                               </span>
@@ -474,18 +596,12 @@ const Index = () => {
                           </div>
                           <div className="flex items-center gap-2">
                             <span className="text-base font-bold text-card-foreground">${Number(selectedService.price).toFixed(0)}</span>
-                            <button onClick={() => setSelectedService(null)} className="rounded-full p-1 text-muted-foreground hover:bg-secondary hover:text-card-foreground">
+                            <button onClick={() => setSelectedService(null)} className="rounded-full p-1 text-muted-foreground hover:bg-primary-foreground/20 hover:text-primary-foreground">
                               <X className="h-3.5 w-3.5" />
                             </button>
                           </div>
                         </div>
                       </div>
-                      <button
-                        onClick={goNext}
-                        className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-primary py-3 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-[1.02] sm:text-sm"
-                      >
-                        Choose specialist <ChevronRight className="h-4 w-4" />
-                      </button>
                     </div>
                   ) : (
                     <div className="grid grid-cols-2 gap-2 sm:gap-3">
@@ -527,38 +643,44 @@ const Index = () => {
               {/* STEP 3: Staff */}
               {step === "staff" && (
                 <div className="space-y-2">
-                  <p className="text-xs text-muted-foreground mb-3">
+                  <p className="text-xs text-muted-foreground mb-3 text-center">
                     Choose your specialist
                   </p>
                   {/* Any Professional option */}
                   <button
-                    onClick={() => { setAnyProfessional(true); setSelectedStaff(null); goNext(); }}
+                    onClick={() => { setAnyProfessional(true); setSelectedStaff(null); }}
                     className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-all sm:p-4 ${
-                      anyProfessional ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"
+                      anyProfessional
+                        ? "border-primary bg-primary text-primary-foreground [&_.text-card-foreground]:text-primary-foreground [&_.text-muted-foreground]:text-primary-foreground/90"
+                        : "border-border hover:border-primary/40"
                     }`}
                   >
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-l-xl bg-secondary text-muted-foreground">
+                    <div className={`flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl ${anyProfessional ? "bg-primary-foreground/20 text-primary-foreground" : "bg-secondary text-muted-foreground"}`}>
                       <User className="h-5 w-5" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-semibold text-card-foreground">Any Professional</p>
                       <p className="text-[11px] text-muted-foreground">We&apos;ll assign based on availability</p>
                     </div>
-                    <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                    <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${anyProfessional ? "bg-primary-foreground/20 text-primary-foreground" : "bg-primary/15 text-primary"}`}>
+                      <ChevronRight className="h-4 w-4" />
+                    </span>
                   </button>
                   {filteredStaff.map((s) => (
                     <button
                       key={s.id}
-                      onClick={() => { setAnyProfessional(false); setSelectedStaff(s); goNext(); }}
+                      onClick={() => { setAnyProfessional(false); setSelectedStaff(s); }}
                       className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-all sm:p-4 ${
-                        selectedStaff?.id === s.id ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"
+                        selectedStaff?.id === s.id
+                          ? "border-primary bg-primary text-primary-foreground [&_.text-card-foreground]:text-primary-foreground [&_.text-muted-foreground]:text-primary-foreground/90 [&_.bg-secondary]:bg-primary-foreground/20 [&_.bg-secondary]:text-primary-foreground"
+                          : "border-border hover:border-primary/40"
                       }`}
                     >
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-l-xl bg-primary/10">
+                      <div className={`flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl ${selectedStaff?.id === s.id ? "bg-primary-foreground/20" : "bg-primary/10"}`}>
                         {s.image_url ? (
                           <img src={s.image_url} alt={s.name} className="h-full w-full object-cover" />
                         ) : (
-                          <User className="h-4 w-4 text-primary" />
+                          <User className={`h-4 w-4 ${selectedStaff?.id === s.id ? "text-primary-foreground" : "text-primary"}`} />
                         )}
                       </div>
                       <div className="min-w-0 flex-1">
@@ -572,7 +694,9 @@ const Index = () => {
                           </div>
                         )}
                       </div>
-                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${selectedStaff?.id === s.id ? "bg-primary-foreground/20 text-primary-foreground" : "bg-primary/15 text-primary"}`}>
+                        <ChevronRight className="h-4 w-4" />
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -581,7 +705,26 @@ const Index = () => {
               {/* STEP 4: Date & Time Slots */}
               {step === "datetime" && (
                 <div>
-                  <p className="text-xs text-muted-foreground mb-3">Select a date</p>
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setDateWindowOffset((o) => Math.max(0, o - 14))}
+                      disabled={dateWindowOffset === 0}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors hover:bg-muted/80 disabled:opacity-40 disabled:pointer-events-none"
+                      aria-label="Previous dates"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                    <p className="text-xs text-muted-foreground text-center">Select a date</p>
+                    <button
+                      type="button"
+                      onClick={() => setDateWindowOffset((o) => o + 14)}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors hover:bg-muted/80"
+                      aria-label="Next dates"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
                   <div className="mb-4 flex gap-2 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none]">
                     {dateOptions.map((d) => {
                       const dateObj = new Date(d + "T00:00:00");
@@ -606,7 +749,7 @@ const Index = () => {
 
                   {selectedDate && (
                     <div className="animate-fade-in">
-                      <p className="text-xs text-muted-foreground mb-2">Available time slots</p>
+                      <p className="text-xs text-muted-foreground mb-2 text-center">Available time slots</p>
                       {availableSlots.length === 0 ? (
                         <p className="py-4 text-center text-xs text-muted-foreground">No available slots for this date</p>
                       ) : (
@@ -631,14 +774,6 @@ const Index = () => {
                         </div>
                       )}
 
-                      {selectedTime && (effectiveStaff || selectedStaff) && (
-                        <button
-                          onClick={goNext}
-                          className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-primary py-3 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-[1.02] sm:text-sm"
-                        >
-                          Continue <ChevronRight className="h-4 w-4" />
-                        </button>
-                      )}
                     </div>
                   )}
                 </div>
@@ -647,9 +782,12 @@ const Index = () => {
               {/* STEP 5: Details & Confirm */}
               {step === "details" && (
                 <div className="animate-fade-in">
+                  {fieldErrors.form && (
+                    <p className="mb-3 text-xs text-destructive">{fieldErrors.form}</p>
+                  )}
                   {/* Summary */}
                   <div className="rounded-xl border border-border bg-secondary/30 p-3 sm:p-4 mb-4">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Booking summary</p>
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2 text-center">Booking summary</p>
                     <div className="space-y-1.5 text-xs">
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Location</span>
@@ -679,27 +817,61 @@ const Index = () => {
 
                   {/* Contact form */}
                   <div className="space-y-2">
-                    <input
-                      type="text"
-                      placeholder="Your name *"
-                      value={bookingForm.name}
-                      onChange={(e) => setBookingForm((f) => ({ ...f, name: e.target.value }))}
-                      className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm"
-                    />
-                    <input
-                      type="email"
-                      placeholder="Email"
-                      value={bookingForm.email}
-                      onChange={(e) => setBookingForm((f) => ({ ...f, email: e.target.value }))}
-                      className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm"
-                    />
-                    <input
-                      type="tel"
-                      placeholder="Phone"
-                      value={bookingForm.phone}
-                      onChange={(e) => setBookingForm((f) => ({ ...f, phone: e.target.value }))}
-                      className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm"
-                    />
+                    <div>
+                      <input
+                        type="text"
+                        placeholder="Your name *"
+                        value={bookingForm.name}
+                        onChange={(e) => { setBookingForm((f) => ({ ...f, name: e.target.value })); setFieldErrors((e) => ({ ...e, name: undefined })); }}
+                        className={`w-full rounded-lg border bg-background px-3 py-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 sm:text-sm ${fieldErrors.name ? "border-destructive" : "border-border focus:ring-primary"}`}
+                      />
+                      {fieldErrors.name && <p className="mt-1 text-[10px] text-destructive">{fieldErrors.name}</p>}
+                    </div>
+                    <div>
+                      <input
+                        type="email"
+                        placeholder="Email"
+                        value={bookingForm.email}
+                        onChange={(e) => { setBookingForm((f) => ({ ...f, email: e.target.value })); setFieldErrors((e) => ({ ...e, email: undefined })); }}
+                        className={`w-full rounded-lg border bg-background px-3 py-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 sm:text-sm ${fieldErrors.email ? "border-destructive" : "border-border focus:ring-primary"}`}
+                      />
+                      {fieldErrors.email && <p className="mt-1 text-[10px] text-destructive">{fieldErrors.email}</p>}
+                    </div>
+                    <div className="flex gap-2">
+                      <Select value={phoneCountryCode} onValueChange={setPhoneCountryCode}>
+                        <SelectTrigger className="flex h-10 w-[130px] shrink-0 cursor-pointer flex-row items-center rounded-lg border border-border bg-background px-2 py-2.5 text-xs sm:text-sm [&>span:first-child]:flex [&>span:first-child]:items-center [&>span:first-child]:gap-2 [&>span:first-child]:flex-row">
+                          <SelectValue placeholder="Code" />
+                        </SelectTrigger>
+                        <SelectContent className="z-[200] max-h-[min(16rem,70vh)]" position="popper" sideOffset={4}>
+                          {COUNTRY_CODES.map(({ code, country }) => (
+                            <SelectItem key={code} value={code} className="cursor-pointer text-xs sm:text-sm">
+                              <span className="flex w-full flex-row items-center gap-2 whitespace-nowrap pl-0">
+                                <img src={getFlagSrc(country)} alt="" className="h-4 w-6 shrink-0 rounded object-cover" />
+                                <span className="shrink-0">{code}</span>
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <input
+                        type="tel"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        placeholder="Phone (digits only)"
+                        value={bookingForm.phone}
+                        onChange={(e) => {
+                          const v = e.target.value.replace(/\D/g, "").slice(0, PHONE_DIGITS_MAX);
+                          setBookingForm((f) => ({ ...f, phone: v }));
+                          setFieldErrors((e) => ({ ...e, phone: undefined }));
+                        }}
+                        className={`min-w-0 flex-1 rounded-lg border bg-background px-3 py-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 sm:text-sm ${fieldErrors.phone ? "border-destructive" : "border-border focus:ring-primary"}`}
+                      />
+                    </div>
+                    {(fieldErrors.phone || (bookingForm.phone && !isValidPhone(bookingForm.phone))) && (
+                      <p className="text-[10px] text-destructive">
+                        {fieldErrors.phone || `Enter ${PHONE_DIGITS_MIN}–${PHONE_DIGITS_MAX} digits`}
+                      </p>
+                    )}
                   </div>
 
                   {/* Payment method */}
@@ -718,7 +890,7 @@ const Index = () => {
                         <button
                           key={pm.id}
                           type="button"
-                          onClick={() => setPaymentMethod(pm.id)}
+                          onClick={() => { setPaymentMethod(pm.id); setFieldErrors((e) => ({ ...e, payment: undefined })); }}
                           className={`flex flex-col items-center gap-1 rounded-xl border px-3 py-2.5 text-[11px] font-medium transition-all sm:text-xs ${
                             paymentMethod === pm.id ? "border-primary bg-primary/5 text-primary" : "border-border hover:border-primary/40"
                           }`}
@@ -729,12 +901,13 @@ const Index = () => {
                         );
                       })}
                     </div>
+                    {fieldErrors.payment && <p className="mt-1 text-[10px] text-destructive">{fieldErrors.payment}</p>}
                   </div>
 
                   <button
                     onClick={handleBooking}
-                    disabled={createBooking.isPending || !bookingForm.name || !paymentMethod}
-                    className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-primary py-3 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-[1.02] disabled:opacity-50 sm:text-sm"
+                    disabled={createBooking.isPending || !bookingForm.name?.trim() || !paymentMethod}
+                    className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-[1.02] disabled:opacity-50 sm:text-sm"
                   >
                     {createBooking.isPending ? "Booking..." : "Confirm booking"}
                     <Check className="h-4 w-4" />
@@ -744,6 +917,58 @@ const Index = () => {
               </>
               )}
             </div>
+
+            {/* Bottom: building summary + Next (steps location → datetime only) */}
+            {!showConfirmation && step !== "details" && (
+              <div className="relative flex shrink-0 flex-col gap-3 bg-card/98 p-4 sm:p-5 pt-6 sm:pt-7">
+                <div className="pointer-events-none absolute left-0 right-0 top-0 h-8 bg-gradient-to-b from-transparent to-card/98" aria-hidden />
+                <div className="rounded-xl border border-border bg-secondary/30 p-3 text-xs sm:p-4 sm:text-sm">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Your order</p>
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Location</span>
+                      <span className="font-medium text-card-foreground">{selectedLocation?.name ?? "—"}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Service</span>
+                      <span className="font-medium text-card-foreground">{selectedService?.name ?? "—"}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Specialist</span>
+                      <span className="font-medium text-card-foreground">
+                        {anyProfessional ? "Any available" : selectedStaff?.name ?? "—"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Date & Time</span>
+                      <span className="font-medium text-card-foreground">
+                        {selectedDate && selectedTime
+                          ? `${new Date(selectedDate + "T00:00:00").toLocaleDateString("en", { weekday: "short", month: "short", day: "numeric" })} at ${formatTime12(selectedTime)}`
+                          : "—"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between border-t border-border pt-1.5">
+                      <span className="font-bold text-card-foreground">Total</span>
+                      <span className="font-bold text-card-foreground">
+                        {selectedService ? `$${Number(selectedService.price).toFixed(0)}` : "—"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={goNext}
+                  disabled={
+                    (step === "location" && !selectedLocation) ||
+                    (step === "service" && !selectedService) ||
+                    (step === "staff" && !anyProfessional && !selectedStaff) ||
+                    (step === "datetime" && (!selectedTime || !(effectiveStaff || selectedStaff)))
+                  }
+                  className="flex w-full items-center justify-center gap-2 rounded-full bg-primary py-3 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-[1.02] disabled:opacity-50 sm:text-sm"
+                >
+                  Next <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>
