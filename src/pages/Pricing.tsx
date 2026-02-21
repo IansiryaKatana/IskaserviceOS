@@ -1,6 +1,7 @@
-import { Link, useNavigate } from "react-router-dom";
-import { Check, X, CreditCard } from "lucide-react";
+import { Link, useNavigate, useLocation } from "react-router-dom";
+import { Check, X, CreditCard, Menu } from "lucide-react";
 import { useState } from "react";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useCreateTenantRequest } from "@/hooks/use-tenant-requests";
 import { usePublicPaymentOptions } from "@/hooks/use-platform-payment-settings";
 import { useFeedback } from "@/hooks/use-feedback";
@@ -84,10 +85,12 @@ const PLANS = [
 
 const Pricing = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { showSuccess, showError } = useFeedback();
   const [showRequestDialog, setShowRequestDialog] = useState(false);
   const [showEnterpriseDialog, setShowEnterpriseDialog] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [requestForm, setRequestForm] = useState({
     name: "",
     email: "",
@@ -213,6 +216,25 @@ const Pricing = () => {
           <Link to="/reviews" className="hover:text-foreground">Reviews</Link>
           <Link to="/login" className="hover:text-foreground">Sign In</Link>
         </nav>
+        <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
+          <SheetTrigger asChild>
+            <button
+              type="button"
+              className="rounded-lg p-2 text-muted-foreground hover:bg-secondary md:hidden"
+              aria-label="Open menu"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+          </SheetTrigger>
+          <SheetContent side="right" className="bg-card border-border">
+            <div className="mt-6 flex flex-col gap-2">
+              <Link to="/" onClick={() => setMobileMenuOpen(false)} className="rounded-full px-4 py-3 text-sm font-medium uppercase text-foreground">Home</Link>
+              <Link to="/pricing" onClick={() => setMobileMenuOpen(false)} className={`rounded-full px-4 py-3 text-sm font-medium uppercase ${location.pathname === "/pricing" ? "bg-primary text-primary-foreground" : "text-foreground"}`}>Pricing</Link>
+              <Link to="/reviews" onClick={() => setMobileMenuOpen(false)} className="rounded-full px-4 py-3 text-sm font-medium uppercase text-foreground">Reviews</Link>
+              <a href="/login" onClick={() => setMobileMenuOpen(false)} className="rounded-full bg-primary px-4 py-3 text-center text-sm font-medium uppercase text-primary-foreground">Sign In</a>
+            </div>
+          </SheetContent>
+        </Sheet>
       </header>
 
       <main className="mx-auto max-w-7xl px-4 py-12 sm:px-6 sm:py-16">

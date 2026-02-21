@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { useNavigate, Link, useLocation } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useSiteSetting } from "@/hooks/use-site-settings";
-import { ArrowRight, ArrowUpRight, Building2, Scissors, Sparkles, Car, Stethoscope, Dumbbell, X, Phone, Mail } from "lucide-react";
+import { ArrowRight, ArrowUpRight, X, Phone, Mail, Menu } from "lucide-react";
 import { useCreateTenantRequest } from "@/hooks/use-tenant-requests";
 import { useFeedback } from "@/hooks/use-feedback";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 
 interface TenantPreview {
   id: string;
@@ -15,14 +16,6 @@ interface TenantPreview {
   status: string;
   theme_config: Record<string, string> | null;
 }
-
-const BUSINESS_ICONS: Record<string, React.ReactNode> = {
-  salon: <Scissors className="h-5 w-5" />,
-  spa: <Sparkles className="h-5 w-5" />,
-  mechanic: <Car className="h-5 w-5" />,
-  clinic: <Stethoscope className="h-5 w-5" />,
-  fitness: <Dumbbell className="h-5 w-5" />,
-};
 
 const BUSINESS_LABELS: Record<string, string> = {
   salon: "Salon & Barbershop",
@@ -39,6 +32,7 @@ const Home = () => {
   const [tenants, setTenants] = useState<TenantPreview[]>([]);
   const [loading, setLoading] = useState(true);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [selectedUseCase, setSelectedUseCase] = useState<TenantPreview | null>(null);
   const [showRequestDialog, setShowRequestDialog] = useState(false);
   const [requestForm, setRequestForm] = useState({
@@ -119,12 +113,48 @@ const Home = () => {
             Sign In
           </a>
         </nav>
-        <button
-          onClick={() => setPanelOpen(true)}
-          className="rounded-full bg-primary px-4 py-2 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-105 md:hidden"
-        >
-          Use cases
-        </button>
+        <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
+          <SheetTrigger asChild>
+            <button
+              type="button"
+              className="rounded-full bg-white/10 p-2.5 text-white backdrop-blur-md md:hidden"
+              aria-label="Open menu"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+          </SheetTrigger>
+          <SheetContent side="right" className="bg-card border-border">
+            <div className="mt-6 flex flex-col gap-2">
+              <button
+                onClick={() => { setPanelOpen(true); setMobileMenuOpen(false); }}
+                className="rounded-full bg-primary px-4 py-3 text-left text-sm font-semibold uppercase tracking-wider text-primary-foreground"
+              >
+                Use cases
+              </button>
+              <Link
+                to="/pricing"
+                onClick={() => setMobileMenuOpen(false)}
+                className={`rounded-full px-4 py-3 text-sm font-medium uppercase ${location.pathname === "/pricing" ? "bg-primary text-primary-foreground" : "text-foreground"}`}
+              >
+                Pricing
+              </Link>
+              <Link
+                to="/reviews"
+                onClick={() => setMobileMenuOpen(false)}
+                className={`rounded-full px-4 py-3 text-sm font-medium uppercase ${location.pathname === "/reviews" ? "bg-primary text-primary-foreground" : "text-foreground"}`}
+              >
+                Reviews
+              </Link>
+              <a
+                href="/login"
+                onClick={() => setMobileMenuOpen(false)}
+                className="rounded-full bg-primary px-4 py-3 text-center text-sm font-medium uppercase text-primary-foreground"
+              >
+                Sign In
+              </a>
+            </div>
+          </SheetContent>
+        </Sheet>
       </header>
 
       {/* Hero Content — bottom-left like tenant page */}
@@ -167,88 +197,80 @@ const Home = () => {
             </div>
 
             {/* Panel content: same scroll/padding as booking dialog */}
-            <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 sm:p-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none]" style={{ scrollbarGutter: "stable" }}>
-              <p className="mb-4 text-xs text-muted-foreground">
-                Explore how Iska Service OS adapts to different industries
-              </p>
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto p-4 sm:p-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none]" style={{ scrollbarGutter: "stable" }}>
+              <div className="min-h-0 flex-1">
+                <p className="mb-4 text-xs text-muted-foreground">
+                  Explore how Iska Service OS adapts to different industries
+                </p>
 
-              {loading ? (
-                <div className="space-y-3">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="h-16 animate-pulse rounded-xl bg-secondary" />
-                  ))}
-                </div>
-              ) : (
-                <>
-                  <div className="space-y-2">
-                    {tenants.map((tenant, idx) => {
-                      const primaryColor = tenant.theme_config?.primary_color || "hsl(var(--primary))";
+                {loading ? (
+                  <div className="space-y-3">
+                    {[1, 2, 3].map((i) => (
+                      <div key={i} className="h-16 animate-pulse rounded-xl bg-secondary" />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-4">
+                    {tenants.map((tenant) => {
                       const isSelected = selectedUseCase?.id === tenant.id;
-                      const pastels = [
-                        { base: "bg-rose-50 dark:bg-rose-950/30", selected: "bg-rose-200/80 dark:bg-rose-900/50" },
-                        { base: "bg-violet-50 dark:bg-violet-950/30", selected: "bg-violet-200/80 dark:bg-violet-900/50" },
-                        { base: "bg-amber-50 dark:bg-amber-950/30", selected: "bg-amber-200/80 dark:bg-amber-900/50" },
-                        { base: "bg-emerald-50 dark:bg-emerald-950/30", selected: "bg-emerald-200/80 dark:bg-emerald-900/50" },
-                        { base: "bg-sky-50 dark:bg-sky-950/30", selected: "bg-sky-200/80 dark:bg-sky-900/50" },
-                      ];
-                      const pastel = pastels[idx % pastels.length];
-                      const bgClass = isSelected ? pastel.selected : pastel.base;
                       return (
                         <button
                           key={tenant.id}
                           onClick={() => setSelectedUseCase(tenant)}
-                          className={`group flex w-full items-center gap-3 rounded-xl p-3 text-left transition-all shadow-sm hover:shadow ${bgClass} sm:p-4`}
+                          className={`group flex min-h-[120px] w-full flex-col rounded-xl p-4 text-left transition-all shadow-sm hover:shadow sm:p-5 ${
+                            isSelected ? "bg-[#d16e17] text-white" : "bg-[#d16e17]/10"
+                          }`}
                         >
-                          <div
-                            className="flex h-14 w-12 shrink-0 items-center justify-center rounded-xl text-primary"
-                            style={{ backgroundColor: primaryColor + "1a" }}
-                          >
-                            {BUSINESS_ICONS[tenant.business_type] || <Building2 className="h-5 w-5" />}
-                          </div>
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold text-card-foreground">{tenant.name}</p>
-                            <p className="text-[11px] text-muted-foreground">
-                              {BUSINESS_LABELS[tenant.business_type] || tenant.business_type}
-                            </p>
-                          </div>
-                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary transition-all group-hover:bg-primary/20 group-hover:text-primary">
-                            <ArrowUpRight className="h-4 w-4" />
+                          <p className={`text-sm font-semibold mb-2 sm:text-base ${isSelected ? "text-white" : "text-card-foreground"}`}>
+                            {tenant.name}
+                          </p>
+                          <hr className={`mb-2 w-full border-0 border-t ${isSelected ? "border-white/30" : "border-border"}`} />
+                          <p className={`text-[11px] flex-1 leading-relaxed sm:text-xs ${isSelected ? "text-white/90" : "text-muted-foreground"}`}>
+                            {BUSINESS_LABELS[tenant.business_type] || tenant.business_type}
+                          </p>
+                          <div className="mt-4 flex justify-end">
+                            <span
+                              className={`flex h-8 w-8 items-center justify-center rounded-lg transition-all ${
+                                isSelected
+                                  ? "bg-white/20 text-white"
+                                  : "bg-[#d16e17]/15 text-[#d16e17] group-hover:bg-[#d16e17]/25"
+                              }`}
+                            >
+                              <ArrowUpRight className="h-4 w-4" />
+                            </span>
                           </div>
                         </button>
                       );
                     })}
                   </div>
-
-                  {/* Fade-up section when a use case is selected */}
-                  {selectedUseCase && (
-                    <div className="mt-4 animate-fade-in rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5">
-                      <p className="mb-2 text-xs font-semibold text-card-foreground">
-                        {selectedUseCase.name}
-                      </p>
-                      <p className="mb-4 text-[11px] text-muted-foreground">
-                        {BUSINESS_LABELS[selectedUseCase.business_type] || selectedUseCase.business_type}
-                      </p>
-                      <button
-                        onClick={() => {
-                          navigate(`/t/${selectedUseCase.slug}`);
-                          setPanelOpen(false);
-                          setSelectedUseCase(null);
-                        }}
-                        className="w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-[1.02]"
-                      >
-                        Check it out
-                      </button>
-                    </div>
-                  )}
-                </>
-              )}
-
-              {/* Footer: same padding as content */}
-              <div className="mt-4 pt-4 border-t border-border">
-                <p className="text-center text-[10px] uppercase tracking-widest text-muted-foreground">
-                  {tenants.length} active tenants · {new Set(tenants.map(t => t.business_type)).size} industries
-                </p>
+                )}
               </div>
+
+              {/* Selected use case block at bottom */}
+              {selectedUseCase && (
+                <div className="mt-4 shrink-0 animate-fade-in rounded-xl bg-black p-4 shadow-sm sm:p-5">
+                  <div className="mb-4 flex flex-col items-end gap-1 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
+                    <p className="text-sm font-semibold text-white sm:text-base">
+                      {selectedUseCase.name}
+                    </p>
+                    <span className="hidden w-px self-stretch bg-white/30 sm:block" aria-hidden />
+                    <p className="text-[11px] text-white/80 sm:text-xs">
+                      {BUSINESS_LABELS[selectedUseCase.business_type] || selectedUseCase.business_type}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      navigate(`/t/${selectedUseCase.slug}`);
+                      setPanelOpen(false);
+                      setSelectedUseCase(null);
+                    }}
+                    className="flex w-full items-center justify-between gap-2 rounded-xl bg-white px-4 py-3 text-sm font-semibold uppercase tracking-wider text-black transition-transform hover:scale-[1.02]"
+                  >
+                    <span>Check it out</span>
+                    <ArrowUpRight className="h-4 w-4 shrink-0" />
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </DialogContent>

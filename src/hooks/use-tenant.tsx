@@ -4,6 +4,8 @@ import { useAuth } from "@/hooks/use-auth";
 
 export interface TenantThemeConfig {
   primary_color: string;
+  /** Text color on primary (selected buttons/cards). If not set, derived from primary luminance. */
+  primary_foreground?: string;
   accent_color: string;
   tag_color_a: string;
   tag_color_b: string;
@@ -51,9 +53,10 @@ export function TenantProvider({ children }: { children: ReactNode }) {
         .eq("id", id)
         .single();
       if (error) throw error;
+      const rawTheme = (data.theme_config as unknown as Partial<TenantThemeConfig>) || {};
       setTenant({
         ...data,
-        theme_config: (data.theme_config as unknown as TenantThemeConfig) || getDefaultTheme(),
+        theme_config: { ...getDefaultTheme(), ...rawTheme },
       });
     } catch (err) {
       console.error("Failed to load tenant:", err);
@@ -109,9 +112,10 @@ export function TenantProvider({ children }: { children: ReactNode }) {
         setTenant(null);
         return;
       }
+      const rawTheme = (data.theme_config as unknown as Partial<TenantThemeConfig>) || {};
       setTenant({
         ...data,
-        theme_config: (data.theme_config as unknown as TenantThemeConfig) || getDefaultTheme(),
+        theme_config: { ...getDefaultTheme(), ...rawTheme },
       });
     } catch (err) {
       console.error("Failed to load tenant by slug:", err);
@@ -143,6 +147,7 @@ export function useTenant() {
 function getDefaultTheme(): TenantThemeConfig {
   return {
     primary_color: "#000000",
+    primary_foreground: "#ffffff",
     accent_color: "#C9A227",
     tag_color_a: "#7C6A0A",
     tag_color_b: "#5C3B2E",

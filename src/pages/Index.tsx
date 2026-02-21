@@ -15,9 +15,11 @@ import {
 } from "@/hooks/use-salon-data";
 import { useTenant } from "@/hooks/use-tenant";
 import { useTenantRatingStats } from "@/hooks/use-reviews";
-import { X, Clock, ChevronRight, ChevronLeft, MapPin, User, Check, Star, CreditCard } from "lucide-react";
+import { useSiteSetting } from "@/hooks/use-site-settings";
+import { X, Clock, ArrowUpRight, ChevronRight, ChevronLeft, MapPin, User, Check, Star, CreditCard, Menu } from "lucide-react";
 import { SiApplepay, SiGooglepay, SiAfterpay } from "react-icons/si";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TypingText } from "@/components/TypingText";
 import { useFeedback } from "@/hooks/use-feedback";
@@ -168,6 +170,7 @@ const Index = () => {
   const createBooking = useCreateBooking();
 
   const [panelOpen, setPanelOpen] = useState(true);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [step, setStep] = useState<Step>("location");
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
 
@@ -257,10 +260,12 @@ const Index = () => {
     return dates;
   }, [dateWindowOffset]);
 
-  // Background image - use business type background, fallback to service images or defaults
+  // Background image - tenant homepage bg from site_settings (if set), else business type / service / defaults
+  const { data: tenantHomeDesktop } = useSiteSetting("homepage_bg_desktop", tenantId ?? null);
+  const { data: tenantHomeMobile } = useSiteSetting("homepage_bg_mobile", tenantId ?? null);
   const businessTypeBg = getBusinessTypeBackground(tenant?.business_type);
-  const bgDesktop = selectedService?.desktop_image_url || businessTypeBg.desktop;
-  const bgMobile = selectedService?.mobile_image_url || businessTypeBg.mobile;
+  const bgDesktop = tenantHomeDesktop?.value || selectedService?.desktop_image_url || businessTypeBg.desktop;
+  const bgMobile = tenantHomeMobile?.value || selectedService?.mobile_image_url || businessTypeBg.mobile;
 
   const goNext = () => {
     const idx = STEPS.indexOf(step);
@@ -398,14 +403,14 @@ const Index = () => {
         <nav className="hidden gap-2 rounded-full bg-white/10 backdrop-blur-md shadow-lg px-3 py-2 font-body text-xs font-medium uppercase tracking-widest text-white md:flex">
           <button
             onClick={() => { setPanelOpen(true); setStep("service"); }}
-            className={`rounded-full px-4 py-2 uppercase transition-colors ${panelOpen ? "bg-white/20 text-hero-foreground" : "text-white hover:text-primary"}`}
+            className={`rounded-full px-4 py-2 uppercase transition-colors ${panelOpen ? "bg-primary text-primary-foreground" : "text-white"}`}
           >
             SERVICES
           </button>
           {tenant?.slug && (
             <Link
               to={`/t/${tenant.slug}/reviews`}
-              className={`rounded-full px-4 py-2 flex items-center gap-1 transition-colors ${location.pathname === `/t/${tenant.slug}/reviews` ? "bg-white/20 text-hero-foreground" : "text-white hover:text-primary"}`}
+              className={`rounded-full px-4 py-2 flex items-center gap-1 transition-colors ${location.pathname === `/t/${tenant.slug}/reviews` ? "bg-primary text-primary-foreground" : "text-white"}`}
             >
               Reviews
               {ratingStats && ratingStats.average_rating > 0 && (
@@ -418,17 +423,54 @@ const Index = () => {
           )}
           <a
             href="/account"
-            className={`rounded-full px-4 py-2 transition-colors ${location.pathname === "/account" ? "bg-white/20 text-hero-foreground" : "text-white hover:text-primary"}`}
+            className={`rounded-full px-4 py-2 transition-colors ${location.pathname === "/account" ? "bg-primary text-primary-foreground" : "text-white"}`}
           >
             Account
           </a>
         </nav>
-        <button
-          onClick={() => setPanelOpen(true)}
-          className="rounded-full bg-primary px-4 py-2 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-105 md:hidden"
-        >
-          Book
-        </button>
+        <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
+          <SheetTrigger asChild>
+            <button
+              type="button"
+              className="rounded-full bg-white/10 p-2.5 text-white backdrop-blur-md md:hidden"
+              aria-label="Open menu"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+          </SheetTrigger>
+          <SheetContent side="right" className="bg-card border-border">
+            <div className="mt-6 flex flex-col gap-2">
+              <button
+                onClick={() => { setPanelOpen(true); setStep("service"); setMobileMenuOpen(false); }}
+                className="rounded-full bg-primary px-4 py-3 text-left text-sm font-semibold uppercase tracking-wider text-primary-foreground"
+              >
+                Services
+              </button>
+              {tenant?.slug && (
+                <Link
+                  to={`/t/${tenant.slug}/reviews`}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={`rounded-full px-4 py-3 text-sm font-medium uppercase ${location.pathname === `/t/${tenant.slug}/reviews` ? "bg-primary text-primary-foreground" : "text-foreground"}`}
+                >
+                  Reviews
+                </Link>
+              )}
+              <a
+                href="/account"
+                onClick={() => setMobileMenuOpen(false)}
+                className={`rounded-full px-4 py-3 text-sm font-medium uppercase ${location.pathname === "/account" ? "bg-primary text-primary-foreground" : "text-foreground"}`}
+              >
+                Account
+              </a>
+              <button
+                onClick={() => { setPanelOpen(true); setStep("location"); setMobileMenuOpen(false); }}
+                className="rounded-full bg-primary px-4 py-3 text-left text-sm font-semibold uppercase tracking-wider text-primary-foreground"
+              >
+                Book appointment
+              </button>
+            </div>
+          </SheetContent>
+        </Sheet>
       </header>
 
       {/* Hero Content - same container padding as header, generous bottom spacing */}
@@ -478,11 +520,13 @@ const Index = () => {
                     </button>
                   )}
                 </div>
-                <div className="absolute left-0 right-0 flex justify-center pointer-events-none">
-                  <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
-                    {showConfirmation ? "Confirmed" : STEP_LABELS[step]}
-                  </h3>
-                </div>
+                {!showConfirmation && (
+                  <div className="absolute left-0 right-0 flex justify-center pointer-events-none">
+                    <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
+                      {STEP_LABELS[step]}
+                    </h3>
+                  </div>
+                )}
                 <div className="w-10 shrink-0 sm:w-12" aria-hidden />
               </div>
             )}
@@ -538,7 +582,7 @@ const Index = () => {
                         {loc.phone && <p className="text-[10px] text-muted-foreground">{loc.phone}</p>}
                       </div>
                       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/15 text-primary">
-                        <ChevronRight className="h-4 w-4" />
+                        <ArrowUpRight className="h-4 w-4" />
                       </span>
                     </button>
                   ))}
@@ -557,7 +601,7 @@ const Index = () => {
                           onClick={() => { setActiveCategory(cat.slug); setSelectedService(null); }}
                           className={
                             effectiveCategory === cat.slug
-                              ? "shrink-0 rounded-full px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition-colors text-white"
+                              ? "shrink-0 rounded-full px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition-colors text-primary-foreground"
                               : "shrink-0 rounded-full px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wider transition-colors bg-secondary text-muted-foreground hover:text-foreground"
                           }
                           style={
@@ -663,7 +707,7 @@ const Index = () => {
                       <p className="text-[11px] text-muted-foreground">We&apos;ll assign based on availability</p>
                     </div>
                     <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${anyProfessional ? "bg-primary-foreground/20 text-primary-foreground" : "bg-primary/15 text-primary"}`}>
-                      <ChevronRight className="h-4 w-4" />
+                      <ArrowUpRight className="h-4 w-4" />
                     </span>
                   </button>
                   {filteredStaff.map((s) => (
@@ -695,7 +739,7 @@ const Index = () => {
                         )}
                       </div>
                       <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${selectedStaff?.id === s.id ? "bg-primary-foreground/20 text-primary-foreground" : "bg-primary/15 text-primary"}`}>
-                        <ChevronRight className="h-4 w-4" />
+                        <ArrowUpRight className="h-4 w-4" />
                       </span>
                     </button>
                   ))}
@@ -963,7 +1007,7 @@ const Index = () => {
                     (step === "staff" && !anyProfessional && !selectedStaff) ||
                     (step === "datetime" && (!selectedTime || !(effectiveStaff || selectedStaff)))
                   }
-                  className="flex w-full items-center justify-center gap-2 rounded-full bg-primary py-3 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-[1.02] disabled:opacity-50 sm:text-sm"
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-[1.02] disabled:opacity-50 sm:text-sm"
                 >
                   Next <ChevronRight className="h-4 w-4" />
                 </button>

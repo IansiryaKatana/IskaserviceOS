@@ -25,6 +25,27 @@ function hexToHsl(hex: string): string {
   return `${Math.round(h * 360)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%`;
 }
 
+/** Convert hex or hsl() string to HSL "H S% L%" for CSS variables. */
+function toHslString(color: string): string | null {
+  const c = color.trim();
+  if (c.startsWith("#") && c.length >= 7) {
+    return hexToHsl(c.slice(0, 7));
+  }
+  const hslMatch = c.match(/hsla?\(\s*(\d+)\s*,\s*(\d+(?:\.\d+)?)%\s*,\s*(\d+(?:\.\d+)?)%/i);
+  if (hslMatch) {
+    return `${hslMatch[1]} ${hslMatch[2]}% ${hslMatch[3]}%`;
+  }
+  return null;
+}
+
+/** Luminance (0–1) from HSL string "H S% L%". Used to pick white vs black text. */
+function luminanceFromHsl(hsl: string): number {
+  const parts = hsl.match(/(\d+)\s+(\d+)%\s+(\d+)%/);
+  if (!parts) return 0.5;
+  const l = Number(parts[3]) / 100;
+  return l;
+}
+
 /**
  * Injects tenant theme_config as CSS variables on :root.
  * Runs reactively whenever tenant changes.
@@ -52,20 +73,24 @@ export function useThemeEngine() {
     const tc = tenant.theme_config;
     const root = document.documentElement;
 
-    // Inject primary color
-    if (tc.primary_color) {
-      const hsl = hexToHsl(tc.primary_color);
-      root.style.setProperty("--primary", hsl);
-      root.style.setProperty("--ring", hsl);
-      root.style.setProperty("--accent", hsl);
-      root.style.setProperty("--sidebar-primary", hsl);
-      root.style.setProperty("--sidebar-ring", hsl);
+    // Always inject primary from tenant branding (merged with defaults so primary_color is always set)
+    const primaryHsl = (tc.primary_color && toHslString(tc.primary_color)) || hexToHsl("#000000");
+    {
+      root.style.setProperty("--primary", primaryHsl);
+      root.style.setProperty("--ring", primaryHsl);
+      root.style.setProperty("--accent", primaryHsl);
+      root.style.setProperty("--sidebar-primary", primaryHsl);
+      root.style.setProperty("--sidebar-ring", primaryHsl);
+      // Selected-state text: use tenant primary_foreground if set, else derive from primary luminance
+      const foregroundHsl = (tc.primary_foreground && toHslString(tc.primary_foreground))
+        ?? (luminanceFromHsl(primaryHsl) < 0.5 ? "0 0% 100%" : "0 0% 0%");
+      root.style.setProperty("--primary-foreground", foregroundHsl);
     }
 
     // Inject accent as olive-light equivalent
     if (tc.accent_color) {
-      const hsl = hexToHsl(tc.accent_color);
-      root.style.setProperty("--olive-light", hsl);
+      const accentHsl = toHslString(tc.accent_color) || hexToHsl("#C9A227");
+      root.style.setProperty("--olive-light", accentHsl);
     }
 
     // Tag colors
@@ -103,9 +128,9 @@ export function useThemeEngine() {
     }
 
     return () => {
-      // Cleanup: remove inline styles when unmounting
+      // Cleanup: remove inline styles when unmounting so platform defaults restore
       const props = [
-        "--primary", "--ring", "--accent", "--sidebar-primary", "--sidebar-ring",
+        "--primary", "--primary-foreground", "--ring", "--accent", "--sidebar-primary", "--sidebar-ring",
         "--olive-light", "--tag-color-a", "--tag-color-b",
         "--font-body", "--font-display", "--radius",
       ];

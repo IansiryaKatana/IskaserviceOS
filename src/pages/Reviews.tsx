@@ -1,5 +1,6 @@
 import { Link, useLocation } from "react-router-dom";
-import { Star, Building2, ChevronLeft, ChevronRight, Check } from "lucide-react";
+import { Star, Building2, ChevronLeft, ChevronRight, Check, Menu, MessageSquare } from "lucide-react";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { usePlatformReviews } from "@/hooks/use-reviews";
 import { useSiteSetting } from "@/hooks/use-site-settings";
 import { Carousel, CarouselContent, CarouselItem, type CarouselApi } from "@/components/ui/carousel";
@@ -14,6 +15,7 @@ const Reviews = () => {
   const [api, setApi] = useState<CarouselApi>();
   const [current, setCurrent] = useState(0);
   const [count, setCount] = useState(0);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const bgImage = desktopBg?.value || "/images/hero-1.jpg";
   const bgMobileImage = mobileBg?.value || bgImage;
@@ -78,6 +80,49 @@ const Reviews = () => {
             Sign In
           </a>
         </nav>
+        <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
+          <SheetTrigger asChild>
+            <button
+              type="button"
+              className="rounded-full bg-white/10 p-2.5 text-white backdrop-blur-md md:hidden"
+              aria-label="Open menu"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+          </SheetTrigger>
+          <SheetContent side="right" className="bg-card border-border">
+            <div className="mt-6 flex flex-col gap-2">
+              <Link
+                to="/"
+                onClick={() => setMobileMenuOpen(false)}
+                className={`rounded-full px-4 py-3 text-sm font-medium uppercase ${location.pathname === "/" ? "bg-primary text-primary-foreground" : "text-foreground"}`}
+              >
+                Home
+              </Link>
+              <Link
+                to="/pricing"
+                onClick={() => setMobileMenuOpen(false)}
+                className={`rounded-full px-4 py-3 text-sm font-medium uppercase ${location.pathname === "/pricing" ? "bg-primary text-primary-foreground" : "text-foreground"}`}
+              >
+                Pricing
+              </Link>
+              <Link
+                to="/reviews"
+                onClick={() => setMobileMenuOpen(false)}
+                className={`rounded-full px-4 py-3 text-sm font-medium uppercase ${location.pathname === "/reviews" ? "bg-primary text-primary-foreground" : "text-foreground"}`}
+              >
+                Reviews
+              </Link>
+              <a
+                href="/login"
+                onClick={() => setMobileMenuOpen(false)}
+                className="rounded-full bg-primary px-4 py-3 text-center text-sm font-medium uppercase text-primary-foreground"
+              >
+                Sign In
+              </a>
+            </div>
+          </SheetContent>
+        </Sheet>
       </header>
 
       <main className="relative z-10 flex min-h-[calc(100vh-80px)] flex-col px-4 pb-12 pt-6 sm:px-6 sm:pb-16 sm:pt-8 lg:px-8 lg:pb-20 lg:pt-10">
@@ -98,14 +143,16 @@ const Reviews = () => {
           </div>
         ) : reviews && reviews.length > 0 ? (
           <div className="relative mt-auto w-full">
-            {/* Description above nav arrows: read feedback / from business using / Iska service OS */}
-            <p className="mb-6 text-center font-body text-sm font-medium uppercase tracking-tight leading-relaxed text-white sm:text-base lg:text-[24px]">
-              Read feedback
-              <br />
-              from business using
-              <br />
-              Iska Service OS
-            </p>
+            {/* Write a review CTA above nav arrows */}
+            <div className="mb-6 flex justify-center">
+              <Link
+                to="/#use-cases"
+                className="inline-flex items-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-semibold uppercase tracking-wider text-primary-foreground shadow-lg transition-transform hover:scale-[1.02]"
+              >
+                <MessageSquare className="h-4 w-4" />
+                Write a review
+              </Link>
+            </div>
             {/* Nav arrows (reference: white circles, black arrows) */}
             <div className="flex items-center justify-center gap-3 mb-6">
               <button

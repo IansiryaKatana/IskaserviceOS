@@ -51,6 +51,7 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { RecordsPagination } from "@/components/RecordsPagination";
 import { useFeedback } from "@/hooks/use-feedback";
 import { usePagination } from "@/hooks/use-pagination";
@@ -73,6 +74,8 @@ const BUSINESS_TYPES = [
 
 interface ThemeForm {
   primary_color: string;
+  /** Text color on primary (selected buttons/cards). */
+  primary_foreground: string;
   accent_color: string;
   tag_color_a: string;
   tag_color_b: string;
@@ -84,6 +87,7 @@ interface ThemeForm {
 
 const DEFAULT_THEME: ThemeForm = {
   primary_color: "#000000",
+  primary_foreground: "#ffffff",
   accent_color: "#C9A227",
   tag_color_a: "#7C6A0A",
   tag_color_b: "#5C3B2E",
@@ -394,6 +398,165 @@ const MediaManagement = () => {
   );
 };
 
+/** Tenant-specific homepage background (desktop + mobile). Loads current values from site_settings. */
+const TenantHomepageBgEditor = ({ tenantId }: { tenantId: string }) => {
+  const defaultUrl = "/images/hero-1.jpg";
+  const { data: settings } = useSiteSettings(tenantId);
+  const upsertSetting = useUpsertSiteSetting();
+  const { showSuccess, showError } = useFeedback();
+  const [desktopImage, setDesktopImage] = useState("");
+  const [mobileImage, setMobileImage] = useState("");
+  const [uploading, setUploading] = useState(false);
+
+  useEffect(() => {
+    const d = settings?.find((s) => s.key === "homepage_bg_desktop");
+    const m = settings?.find((s) => s.key === "homepage_bg_mobile");
+    setDesktopImage(d?.value || defaultUrl);
+    setMobileImage(m?.value || d?.value || defaultUrl);
+  }, [settings]);
+
+  const handleUpload = async (file: File, type: "desktop" | "mobile") => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const ext = file.name.split(".").pop();
+      const path = `homepage/${tenantId}/${type}-${Date.now()}.${ext}`;
+      const { error } = await supabase.storage.from("service-images").upload(path, file, { upsert: true });
+      if (error) throw error;
+      const { data: { publicUrl } } = supabase.storage.from("service-images").getPublicUrl(path);
+      const key = type === "desktop" ? "homepage_bg_desktop" : "homepage_bg_mobile";
+      await upsertSetting.mutateAsync({ key, value: publicUrl, tenant_id: tenantId });
+      if (type === "desktop") setDesktopImage(publicUrl);
+      else setMobileImage(publicUrl);
+      showSuccess("Image uploaded", `${type === "desktop" ? "Desktop" : "Mobile"} homepage background saved.`);
+    } catch (err: any) {
+      showError("Upload failed", err.message || "Failed to upload");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleUrlSave = async (url: string, type: "desktop" | "mobile") => {
+    try {
+      const key = type === "desktop" ? "homepage_bg_desktop" : "homepage_bg_mobile";
+      await upsertSetting.mutateAsync({ key, value: url, tenant_id: tenantId });
+      if (type === "desktop") setDesktopImage(url);
+      else setMobileImage(url);
+      showSuccess("Saved", "Homepage background URL updated.");
+    } catch (err: any) {
+      showError("Update failed", err.message || "Failed to save");
+    }
+  };
+
+  const inputCls = "flex-1 rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm";
+  return (
+    <div className="space-y-4">
+      <p className="text-[10px] text-muted-foreground">Background image for this tenant&apos;s homepage (/t/.../). Loads and saves current values.</p>
+      <div className="rounded-xl border border-border bg-card p-4">
+        <h4 className="text-sm font-semibold text-card-foreground mb-3">Homepage – Desktop</h4>
+        <div className="relative aspect-video w-full overflow-hidden rounded-lg border border-border bg-secondary mb-3">
+          <img src={desktopImage} alt="Desktop preview" className="h-full w-full object-cover" onError={(e) => { (e.target as HTMLImageElement).src = defaultUrl; }} />
+        </div>
+        <input type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f, "desktop"); }} disabled={uploading} className="mb-2 w-full text-xs file:mr-2 file:rounded-full file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-primary-foreground" />
+        <div className="flex gap-2">
+          <input type="url" value={desktopImage} onChange={(e) => setDesktopImage(e.target.value)} placeholder="https://..." className={inputCls} />
+          <button type="button" onClick={() => handleUrlSave(desktopImage, "desktop")} disabled={uploading} className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50">Save</button>
+        </div>
+      </div>
+      <div className="rounded-xl border border-border bg-card p-4">
+        <h4 className="text-sm font-semibold text-card-foreground mb-3">Homepage – Mobile</h4>
+        <div className="relative aspect-[9/16] w-full max-w-[200px] overflow-hidden rounded-lg border border-border bg-secondary mb-3">
+          <img src={mobileImage} alt="Mobile preview" className="h-full w-full object-cover" onError={(e) => { (e.target as HTMLImageElement).src = defaultUrl; }} />
+        </div>
+        <input type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f, "mobile"); }} disabled={uploading} className="mb-2 w-full text-xs file:mr-2 file:rounded-full file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-primary-foreground" />
+        <div className="flex gap-2">
+          <input type="url" value={mobileImage} onChange={(e) => setMobileImage(e.target.value)} placeholder="https://..." className={inputCls} />
+          <button type="button" onClick={() => handleUrlSave(mobileImage, "mobile")} disabled={uploading} className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50">Save</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/** Tenant-specific review page background (desktop + mobile). Used when editing a tenant. */
+const TenantReviewBgEditor = ({ tenantId }: { tenantId: string }) => {
+  const { data: settings } = useSiteSettings(tenantId);
+  const upsertSetting = useUpsertSiteSetting();
+  const { showSuccess, showError } = useFeedback();
+  const [desktopImage, setDesktopImage] = useState("");
+  const [mobileImage, setMobileImage] = useState("");
+  const [uploading, setUploading] = useState(false);
+
+  useEffect(() => {
+    const d = settings?.find((s) => s.key === "reviews_bg_desktop");
+    const m = settings?.find((s) => s.key === "reviews_bg_mobile");
+    setDesktopImage(d?.value || "/images/hero-1.jpg");
+    setMobileImage(m?.value || d?.value || "/images/hero-1.jpg");
+  }, [settings]);
+
+  const handleUpload = async (file: File, type: "desktop" | "mobile") => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const ext = file.name.split(".").pop();
+      const path = `reviews/${tenantId}/${type}-${Date.now()}.${ext}`;
+      const { error } = await supabase.storage.from("service-images").upload(path, file, { upsert: true });
+      if (error) throw error;
+      const { data: { publicUrl } } = supabase.storage.from("service-images").getPublicUrl(path);
+      const key = type === "desktop" ? "reviews_bg_desktop" : "reviews_bg_mobile";
+      await upsertSetting.mutateAsync({ key, value: publicUrl, tenant_id: tenantId });
+      if (type === "desktop") setDesktopImage(publicUrl);
+      else setMobileImage(publicUrl);
+      showSuccess("Image uploaded", `${type === "desktop" ? "Desktop" : "Mobile"} background saved.`);
+    } catch (err: any) {
+      showError("Upload failed", err.message || "Failed to upload");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleUrlSave = async (url: string, type: "desktop" | "mobile") => {
+    try {
+      const key = type === "desktop" ? "reviews_bg_desktop" : "reviews_bg_mobile";
+      await upsertSetting.mutateAsync({ key, value: url, tenant_id: tenantId });
+      if (type === "desktop") setDesktopImage(url);
+      else setMobileImage(url);
+      showSuccess("Saved", "Background URL updated.");
+    } catch (err: any) {
+      showError("Update failed", err.message || "Failed to save");
+    }
+  };
+
+  const inputCls = "flex-1 rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm";
+  return (
+    <div className="space-y-4">
+      <p className="text-[10px] text-muted-foreground">Background image for this tenant&apos;s review page (/t/.../reviews).</p>
+      <div className="rounded-xl border border-border bg-card p-4">
+        <h4 className="text-sm font-semibold text-card-foreground mb-3">Desktop</h4>
+        <div className="relative aspect-video w-full overflow-hidden rounded-lg border border-border bg-secondary mb-3">
+          <img src={desktopImage} alt="Desktop preview" className="h-full w-full object-cover" onError={(e) => { (e.target as HTMLImageElement).src = "/images/hero-1.jpg"; }} />
+        </div>
+        <input type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f, "desktop"); }} disabled={uploading} className="mb-2 w-full text-xs file:mr-2 file:rounded-full file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-primary-foreground" />
+        <div className="flex gap-2">
+          <input type="url" value={desktopImage} onChange={(e) => setDesktopImage(e.target.value)} placeholder="https://..." className={inputCls} />
+          <button type="button" onClick={() => handleUrlSave(desktopImage, "desktop")} disabled={uploading} className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50">Save</button>
+        </div>
+      </div>
+      <div className="rounded-xl border border-border bg-card p-4">
+        <h4 className="text-sm font-semibold text-card-foreground mb-3">Mobile</h4>
+        <div className="relative aspect-[9/16] w-full max-w-[200px] overflow-hidden rounded-lg border border-border bg-secondary mb-3">
+          <img src={mobileImage} alt="Mobile preview" className="h-full w-full object-cover" onError={(e) => { (e.target as HTMLImageElement).src = "/images/hero-1.jpg"; }} />
+        </div>
+        <input type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f, "mobile"); }} disabled={uploading} className="mb-2 w-full text-xs file:mr-2 file:rounded-full file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-primary-foreground" />
+        <div className="flex gap-2">
+          <input type="url" value={mobileImage} onChange={(e) => setMobileImage(e.target.value)} placeholder="https://..." className={inputCls} />
+          <button type="button" onClick={() => handleUrlSave(mobileImage, "mobile")} disabled={uploading} className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50">Save</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 interface ConfirmState {
   open: boolean;
   title: string;
@@ -416,7 +579,7 @@ const Platform = () => {
   const [tab, setTab] = useState<Tab>("overview");
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Tenant | null>(null);
-  const [formSection, setFormSection] = useState<"general" | "theme" | "subscription" | "deployment">("general");
+  const [formSection, setFormSection] = useState<"general" | "theme" | "subscription" | "deployment" | "media">("general");
   const [form, setForm] = useState({
     name: "",
     slug: "",
@@ -545,6 +708,7 @@ const Platform = () => {
     });
     setThemeForm({
       primary_color: tc.primary_color || DEFAULT_THEME.primary_color,
+      primary_foreground: tc.primary_foreground ?? DEFAULT_THEME.primary_foreground,
       accent_color: tc.accent_color || DEFAULT_THEME.accent_color,
       tag_color_a: tc.tag_color_a || DEFAULT_THEME.tag_color_a,
       tag_color_b: tc.tag_color_b || DEFAULT_THEME.tag_color_b,
@@ -1422,28 +1586,28 @@ const Platform = () => {
         {tab === "media" && <MediaManagement />}
       </main>
 
-      {/* Tenant Form Modal — Expanded */}
-      {showForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4 backdrop-blur-sm">
-          <div className="animate-slide-in-right w-full max-w-lg rounded-2xl bg-card p-5 shadow-2xl sm:p-6 max-h-[90vh] overflow-y-auto">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
-                {editing ? "Edit Tenant" : "New Tenant"}
-              </h3>
-              <button onClick={() => setShowForm(false)} className="text-muted-foreground hover:text-card-foreground">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
+      {/* Tenant Form — Sheet */}
+      <Sheet open={showForm} onOpenChange={(open) => { if (!open) setShowForm(false); }}>
+        <SheetContent
+          side="right"
+          className="w-full sm:max-w-2xl overflow-y-auto p-0 flex flex-col"
+          aria-describedby={undefined}
+        >
+          <div className="flex shrink-0 flex-col gap-3 border-b border-border px-5 py-4 sm:px-6">
+            <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg pr-8">
+              {editing ? "Edit Tenant" : "New Tenant"}
+            </h3>
             {/* Section Tabs */}
-            <div className="mb-4 flex gap-2 overflow-x-auto pb-1">
+            <div className="flex gap-2 overflow-x-auto pb-1">
               {sectionBtn("general", "General", <Building2 className="h-3 w-3" />)}
               {sectionBtn("theme", "Theme & Branding", <Palette className="h-3 w-3" />)}
+              {editing && sectionBtn("media", "Media (BG images)", <ImageIcon className="h-3 w-3" />)}
               {editing && sectionBtn("subscription", "Subscription", <CreditCard className="h-3 w-3" />)}
               {editing && sectionBtn("deployment", "Deployment", <Key className="h-3 w-3" />)}
             </div>
+          </div>
 
-            <div className="space-y-3">
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4 sm:px-6 space-y-3 [.scrollbar-width:none] [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none]">
               {/* GENERAL SECTION */}
               {formSection === "general" && (
                 <>
@@ -1511,9 +1675,11 @@ const Platform = () => {
                 <>
                   <p className="text-[10px] text-muted-foreground">Customize the visual appearance for this tenant.</p>
                   <div className="grid grid-cols-2 gap-3">
-                    {(["primary_color", "accent_color", "tag_color_a", "tag_color_b"] as const).map((key) => (
+                    {(["primary_color", "primary_foreground", "accent_color", "tag_color_a", "tag_color_b"] as const).map((key) => (
                       <div key={key}>
-                        <label className={labelCls}>{key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}</label>
+                        <label className={labelCls}>
+                          {key === "primary_foreground" ? "Text on primary (selected)" : key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+                        </label>
                         <div className="mt-1 flex items-center gap-2">
                           <input
                             type="color"
@@ -1566,8 +1732,8 @@ const Platform = () => {
                     </div>
                     <div className="mt-2 flex gap-2">
                       <div
-                        className="rounded-full px-4 py-1.5 text-xs font-semibold text-white"
-                        style={{ backgroundColor: themeForm.primary_color, borderRadius: themeForm.border_radius, fontFamily: themeForm.font_primary }}
+                        className="rounded-full px-4 py-1.5 text-xs font-semibold"
+                        style={{ backgroundColor: themeForm.primary_color, color: themeForm.primary_foreground, borderRadius: themeForm.border_radius, fontFamily: themeForm.font_primary }}
                       >
                         Book Now
                       </div>
@@ -1580,6 +1746,16 @@ const Platform = () => {
                     </div>
                   </div>
                 </>
+              )}
+
+              {/* MEDIA: Tenant homepage + review page backgrounds */}
+              {formSection === "media" && editing && (
+                <div className="space-y-6">
+                  <TenantHomepageBgEditor tenantId={editing.id} />
+                  <div className="border-t border-border pt-6">
+                    <TenantReviewBgEditor tenantId={editing.id} />
+                  </div>
+                </div>
               )}
 
               {/* SUBSCRIPTION SECTION */}
@@ -1674,9 +1850,8 @@ const Platform = () => {
                 {createTenant.isPending || updateTenant.isPending ? "Saving..." : editing ? "Update Tenant" : "Create Tenant"}
               </button>
             </div>
-          </div>
-          </div>
-        )}
+        </SheetContent>
+      </Sheet>
 
       {/* Platform Admin Form Modal */}
       {showAdminForm && (
