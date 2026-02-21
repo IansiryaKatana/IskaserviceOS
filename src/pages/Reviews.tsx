@@ -81,26 +81,31 @@ const Reviews = () => {
       </header>
 
       <main className="relative z-10 flex min-h-[calc(100vh-80px)] flex-col px-4 pb-12 pt-6 sm:px-6 sm:pb-16 sm:pt-8 lg:px-8 lg:pb-20 lg:pt-10">
-        {/* Title block: centered, with description */}
+        {/* Title block: centered */}
         <div className="mb-8 text-center sm:mb-10">
-          <h1 className="font-display text-3xl font-bold leading-tight text-hero-foreground sm:text-4xl lg:text-5xl">
+          <h1 className="font-display text-4xl font-bold leading-tight text-hero-foreground sm:text-5xl lg:text-6xl xl:text-7xl">
             What Our
             <br />
             Tenants Say
           </h1>
-          <p className="mt-2 text-xs font-medium uppercase tracking-widest text-white sm:text-sm">
-            Real feedback from businesses using Iska Service OS
-          </p>
         </div>
 
         {isLoading ? (
-          <div className="flex justify-center gap-4">
+          <div className="mt-auto flex justify-center gap-4">
             {[1, 2, 3].map((i) => (
               <div key={i} className="h-48 w-72 animate-pulse rounded-xl bg-white/10 backdrop-blur-md" />
             ))}
           </div>
         ) : reviews && reviews.length > 0 ? (
-          <div className="relative w-full">
+          <div className="relative mt-auto w-full">
+            {/* Description above nav arrows: read feedback / from business using / Iska service OS */}
+            <p className="mb-6 text-center font-body text-sm font-medium uppercase tracking-tight leading-relaxed text-white sm:text-base lg:text-[24px]">
+              Read feedback
+              <br />
+              from business using
+              <br />
+              Iska Service OS
+            </p>
             {/* Nav arrows (reference: white circles, black arrows) */}
             <div className="flex items-center justify-center gap-3 mb-6">
               <button
@@ -175,7 +180,7 @@ const Reviews = () => {
             </Carousel>
           </div>
         ) : (
-          <div className="mx-auto w-full max-w-md rounded-xl border-0 bg-white/10 backdrop-blur-md p-8 text-center shadow-lg">
+          <div className="mx-auto mt-auto w-full max-w-md rounded-xl border-0 bg-white/10 backdrop-blur-md p-8 text-center shadow-lg">
             <Building2 className="mx-auto h-10 w-10 text-hero-muted mb-3" />
             <p className="text-xs text-hero-muted sm:text-sm">No reviews yet. Be the first to review!</p>
           </div>
