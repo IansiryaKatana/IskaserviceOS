@@ -371,7 +371,7 @@ export function useAllUserRoles() {
       const { data: roles, error } = await supabase
         .from("user_roles")
         .select("*")
-        .order("created_at", { ascending: false });
+        .order("id", { ascending: false });
       if (error) throw error;
       
       // Fetch related data

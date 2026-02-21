@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -15,8 +15,10 @@ import {
 } from "@/hooks/use-salon-data";
 import { useTenant } from "@/hooks/use-tenant";
 import { useTenantRatingStats } from "@/hooks/use-reviews";
-import { X, Clock, ChevronRight, ChevronLeft, MapPin, User, Check, Star, MessageSquare } from "lucide-react";
-import { toast } from "sonner";
+import { X, Clock, ChevronRight, ChevronLeft, MapPin, User, Check, Star, CreditCard } from "lucide-react";
+import { SiApplepay, SiGooglepay, SiAfterpay } from "react-icons/si";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { useFeedback } from "@/hooks/use-feedback";
 
 const defaultDesktopBg = "/images/hero-1.jpg";
 const defaultMobileBg = "/images/hero-2.jpg";
@@ -91,31 +93,34 @@ function formatTime12(t: string) {
 
 const Index = () => {
   const { tenant, tenantId } = useTenant();
+  const { showSuccess, showError } = useFeedback();
   const { data: services } = useServices(tenantId);
   const { data: locations } = useLocations(tenantId);
   const { data: allStaff } = useStaff(tenantId);
   const { data: categories } = useServiceCategories(tenantId);
   const createBooking = useCreateBooking();
 
-  const [panelOpen, setPanelOpen] = useState(true);
+  const [panelOpen, setPanelOpen] = useState(false);
   const [step, setStep] = useState<Step>("location");
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
 
   const [selectedLocation, setSelectedLocation] = useState<Location | null>(null);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
   const [selectedStaff, setSelectedStaff] = useState<Staff | null>(null);
+  const [anyProfessional, setAnyProfessional] = useState(false);
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedTime, setSelectedTime] = useState("");
   const [bookingForm, setBookingForm] = useState({ name: "", email: "", phone: "" });
   const [showConfirmation, setShowConfirmation] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<string>("");
 
   // Set first category as active when loaded
   const effectiveCategory = activeCategory || categories?.[0]?.slug || null;
 
-  // Staff schedules for selected staff
-  const { data: schedules } = useStaffSchedules(selectedStaff?.id);
-  // Existing bookings for selected date+staff
-  const { data: existingBookings } = useBookingsByDate(selectedDate || undefined, selectedStaff?.id || undefined);
+  // Staff schedules - all when anyProfessional, else selected staff
+  const { data: schedules } = useStaffSchedules(anyProfessional ? undefined : selectedStaff?.id);
+  // Existing bookings for selected date - all when anyProfessional, else filtered by staff
+  const { data: existingBookings } = useBookingsByDate(selectedDate || undefined, anyProfessional ? undefined : selectedStaff?.id);
 
   // Filter staff by category of selected service
   const filteredStaff = useMemo(() => {
@@ -129,17 +134,46 @@ const Index = () => {
     return services.filter((s) => s.category === effectiveCategory);
   }, [services, effectiveCategory]);
 
-  // Get available slots
-  const availableSlots = useMemo(() => {
-    if (!selectedDate || !selectedStaff || !selectedService || !schedules) return [];
+  // Get available slots - when anyProfessional, merge slots from all staff
+  const availableSlots = useMemo((): { time: string; booked: boolean; availableStaffIds?: string[] }[] => {
+    if (!selectedDate || !selectedService || !schedules) return [];
     const dateObj = new Date(selectedDate + "T00:00:00");
     const dow = dateObj.getDay();
-    const schedule = schedules.find((s) => s.day_of_week === dow && s.is_available);
+    if (anyProfessional) {
+      const slotToStaffIds = new Map<string, string[]>();
+      for (const staff of filteredStaff) {
+        const schedule = schedules.find((s: { staff_id: string; day_of_week: number; is_available: boolean }) => s.staff_id === staff.id && s.day_of_week === dow && s.is_available);
+        if (!schedule) continue;
+        const staffBookings = existingBookings?.filter((b) => b.staff_id === staff.id && b.status !== "cancelled") ?? [];
+        const bookedTimes = new Set(staffBookings.map((b) => b.booking_time.slice(0, 5)));
+        const slots = generateSlots(schedule.start_time, schedule.end_time, selectedService.duration_minutes);
+        for (const slot of slots) {
+          if (!bookedTimes.has(slot)) {
+            const list = slotToStaffIds.get(slot) ?? [];
+            list.push(staff.id);
+            slotToStaffIds.set(slot, list);
+          }
+        }
+      }
+      return Array.from(slotToStaffIds.entries()).map(([time, staffIds]) => ({ time, booked: false, availableStaffIds: staffIds }));
+    }
+    if (!selectedStaff) return [];
+    const schedule = schedules.find((s: { staff_id?: string; day_of_week: number; is_available: boolean }) => s.day_of_week === dow && s.is_available);
     if (!schedule) return [];
     const allSlots = generateSlots(schedule.start_time, schedule.end_time, selectedService.duration_minutes);
     const bookedTimes = new Set(existingBookings?.filter(b => b.status !== "cancelled").map((b) => b.booking_time.slice(0, 5)) || []);
     return allSlots.map((slot) => ({ time: slot, booked: bookedTimes.has(slot) }));
-  }, [selectedDate, selectedStaff, selectedService, schedules, existingBookings]);
+  }, [selectedDate, selectedStaff, selectedService, schedules, existingBookings, anyProfessional, filteredStaff]);
+
+  // Auto-select first available staff when anyProfessional + date + time chosen
+  const effectiveStaff = useMemo(() => {
+    if (selectedStaff) return selectedStaff;
+    if (!anyProfessional || !selectedDate || !selectedTime || !filteredStaff.length) return null;
+    const slotInfo = availableSlots.find((s) => s.time === selectedTime && s.availableStaffIds?.length);
+    const staffIds = slotInfo?.availableStaffIds;
+    if (!staffIds?.length) return null;
+    return filteredStaff.find((s) => staffIds.includes(s.id)) ?? null;
+  }, [selectedStaff, anyProfessional, selectedDate, selectedTime, filteredStaff, availableSlots]);
 
   // Next 14 days
   const dateOptions = useMemo(() => {
@@ -170,21 +204,29 @@ const Index = () => {
   const clearSelection = () => {
     setSelectedService(null);
     setSelectedStaff(null);
+    setAnyProfessional(false);
     setSelectedDate("");
     setSelectedTime("");
     setBookingForm({ name: "", email: "", phone: "" });
+    setPaymentMethod("");
+    setShowConfirmation(false);
     setStep("location");
   };
 
   const handleBooking = async () => {
-    if (!selectedService || !selectedStaff || !selectedLocation || !bookingForm.name || !selectedDate || !selectedTime) {
-      toast.error("Please complete all required fields");
+    const staff = effectiveStaff;
+    if (!selectedService || !staff || !selectedLocation || !bookingForm.name || !selectedDate || !selectedTime) {
+      showError("Required", "Please complete all required fields");
+      return;
+    }
+    if (!paymentMethod) {
+      showError("Payment", "Please select a payment method");
       return;
     }
     try {
       await createBooking.mutateAsync({
         service_id: selectedService.id,
-        staff_id: selectedStaff.id,
+        staff_id: staff.id,
         location_id: selectedLocation.id,
         customer_name: bookingForm.name,
         customer_email: bookingForm.email || null,
@@ -199,8 +241,7 @@ const Index = () => {
         metadata: null,
       });
       setShowConfirmation(true);
-      setPanelOpen(false);
-      toast.success("Booking confirmed!");
+      showSuccess("Booking confirmed", "Your booking has been confirmed.");
 
       // Send confirmation email (fire-and-forget)
       if (bookingForm.email) {
@@ -213,7 +254,7 @@ const Index = () => {
               booking_time: selectedTime,
               total_price: selectedService.price,
               service_name: selectedService.name,
-              staff_name: selectedStaff.name,
+              staff_name: staff.name,
               location_name: selectedLocation.name,
             },
             tenant: { name: tenant?.name },
@@ -221,7 +262,7 @@ const Index = () => {
         }).catch(() => {}); // silent fail for email
       }
     } catch {
-      toast.error("Failed to create booking");
+      showError("Failed", "Failed to create booking");
     }
   };
 
@@ -259,7 +300,7 @@ const Index = () => {
       </div>
 
       {/* Navigation */}
-      <header className="relative z-10 flex items-center justify-between px-4 py-4 sm:px-8 sm:py-6">
+      <header className="relative z-10 flex items-center justify-between px-6 py-4 sm:px-10 sm:py-6 lg:px-12">
         <a href="/">
           {tenant?.logo_url ? (
             <img src={tenant.logo_url} alt={tenantName} className="h-8 sm:h-10" />
@@ -281,7 +322,6 @@ const Index = () => {
             </Link>
           )}
           <a href="/account" className="rounded-full px-4 py-2 hover:text-hero-foreground transition-colors">Account</a>
-          <a href="/admin" className="rounded-full px-4 py-2 hover:text-hero-foreground transition-colors">Admin</a>
         </nav>
         <button
           onClick={() => setPanelOpen(true)}
@@ -291,8 +331,8 @@ const Index = () => {
         </button>
       </header>
 
-      {/* Hero Content */}
-      <main className="relative z-10 flex min-h-[calc(100vh-80px)] flex-col justify-end px-4 pb-8 sm:px-8 sm:pb-16">
+      {/* Hero Content - same container padding as header, generous bottom spacing */}
+      <main className="relative z-10 flex min-h-[calc(100vh-80px)] flex-col justify-end px-6 pb-12 sm:px-10 sm:pb-20 lg:px-12 lg:pb-24">
         <div className="max-w-2xl">
           <h1 className="font-display text-3xl font-bold leading-tight text-hero-foreground sm:text-5xl lg:text-6xl">
             {getTenantTitle(tenant?.business_type)}
@@ -311,37 +351,52 @@ const Index = () => {
         </div>
       </main>
 
-      {/* Right-anchored Service/Booking Panel */}
-      {panelOpen && (
-        <div className="fixed inset-0 z-50 flex justify-end">
-          <div className="absolute inset-0 bg-foreground/30 backdrop-blur-sm" onClick={() => setPanelOpen(false)} />
-          <div className="animate-slide-in-right relative z-10 flex h-full w-full max-w-md flex-col bg-card shadow-2xl sm:max-w-lg">
+      {/* Dialog: triggered by Book appointment button */}
+      <Dialog open={panelOpen} onOpenChange={setPanelOpen}>
+        <DialogContent hideOverlay closeButtonClassName="absolute right-4 top-4 sm:right-5 rounded-lg bg-muted p-1.5 hover:bg-muted/80 data-[state=open]:!bg-muted" className="booking-dialog animate-none left-auto right-6 top-20 bottom-6 z-[100] flex w-full max-w-[calc(28rem-60px)] translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-l-xl border-0 border-l bg-card p-0 shadow-2xl sm:right-10 sm:top-24 sm:bottom-8 sm:max-w-[calc(32rem-60px)] md:top-32 md:bottom-10 lg:right-12 lg:top-36 lg:bottom-12">
+          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
             {/* Panel header */}
-            <div className="flex items-center justify-between border-b border-border px-4 py-3 sm:px-5">
+            <div className="flex min-w-0 shrink-0 items-center justify-between overflow-hidden p-4 sm:p-5">
               <div className="flex items-center gap-2">
-                {stepIdx > 0 && (
-                  <button onClick={goBack} className="rounded-lg p-1 text-muted-foreground hover:text-card-foreground">
+                {!showConfirmation && stepIdx > 0 && (
+                  <button onClick={goBack} className="rounded-lg bg-muted p-1.5 text-muted-foreground hover:bg-muted/80 hover:text-card-foreground">
                     <ChevronLeft className="h-4 w-4" />
                   </button>
                 )}
                 <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
-                  {STEP_LABELS[step]}
+                  {showConfirmation ? "Confirmed" : STEP_LABELS[step]}
                 </h3>
               </div>
-              <button onClick={() => setPanelOpen(false)} className="rounded-lg p-1 text-muted-foreground hover:text-card-foreground">
-                <X className="h-5 w-5" />
-              </button>
             </div>
 
-            {/* Step indicators */}
-            <div className="flex gap-1 px-4 py-2 sm:px-5">
-              {STEPS.map((s, i) => (
-                <div key={s} className={`h-1 flex-1 rounded-full transition-colors ${i <= stepIdx ? "bg-primary" : "bg-border"}`} />
-              ))}
-            </div>
-
-            {/* Panel content */}
-            <div className="flex-1 overflow-y-auto px-4 py-3 sm:px-5 sm:py-4">
+            {/* Panel content - uniform padding matching left */}
+            <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 sm:p-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none]" style={{ scrollbarGutter: "stable" }}>
+              {/* Confirmation view (inside same dialog) */}
+              {showConfirmation && selectedService ? (
+                <div className="animate-fade-in space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary">
+                      <Check className="h-5 w-5 text-primary-foreground" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-card-foreground sm:text-base">Booking confirmed!</p>
+                      <p className="text-[11px] text-muted-foreground">We&apos;ll see you soon</p>
+                    </div>
+                  </div>
+                  <div className="space-y-2 rounded-xl border border-border bg-secondary/30 p-3 text-xs sm:p-4 sm:text-sm">
+                    <div className="flex justify-between"><span className="text-muted-foreground">Service</span><span className="font-medium">{selectedService.name}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Specialist</span><span className="font-medium">{effectiveStaff?.name}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Location</span><span className="font-medium">{selectedLocation?.name}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Date</span><span className="font-medium">{selectedDate && new Date(selectedDate + "T00:00:00").toLocaleDateString("en", { weekday: "short", month: "short", day: "numeric" })}</span></div>
+                    <div className="flex justify-between"><span className="text-muted-foreground">Time</span><span className="font-medium">{selectedTime && formatTime12(selectedTime)}</span></div>
+                    <div className="flex justify-between border-t border-border pt-2"><span className="font-bold">Total</span><span className="font-bold">${Number(selectedService.price).toFixed(0)}</span></div>
+                  </div>
+                  <button onClick={clearSelection} className="w-full rounded-full bg-primary px-6 py-3 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-[1.02] sm:text-sm">
+                    Done
+                  </button>
+                </div>
+              ) : (
+              <>
               {/* STEP 1: Location */}
               {step === "location" && (
                 <div className="space-y-2">
@@ -373,7 +428,7 @@ const Index = () => {
                 <div>
                   {/* Dynamic category tabs */}
                   {categories && categories.length > 0 && (
-                    <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
+                    <div className="mb-3 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none]">
                       {categories.map((cat) => (
                         <button
                           key={cat.id}
@@ -475,19 +530,35 @@ const Index = () => {
                   <p className="text-xs text-muted-foreground mb-3">
                     Choose your specialist
                   </p>
+                  {/* Any Professional option */}
+                  <button
+                    onClick={() => { setAnyProfessional(true); setSelectedStaff(null); goNext(); }}
+                    className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-all sm:p-4 ${
+                      anyProfessional ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"
+                    }`}
+                  >
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-l-xl bg-secondary text-muted-foreground">
+                      <User className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-card-foreground">Any Professional</p>
+                      <p className="text-[11px] text-muted-foreground">We&apos;ll assign based on availability</p>
+                    </div>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  </button>
                   {filteredStaff.map((s) => (
                     <button
                       key={s.id}
-                      onClick={() => { setSelectedStaff(s); goNext(); }}
+                      onClick={() => { setAnyProfessional(false); setSelectedStaff(s); goNext(); }}
                       className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-all sm:p-4 ${
                         selectedStaff?.id === s.id ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"
                       }`}
                     >
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary overflow-hidden">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-l-xl bg-primary/10">
                         {s.image_url ? (
                           <img src={s.image_url} alt={s.name} className="h-full w-full object-cover" />
                         ) : (
-                          <User className="h-4 w-4" />
+                          <User className="h-4 w-4 text-primary" />
                         )}
                       </div>
                       <div className="min-w-0 flex-1">
@@ -511,7 +582,7 @@ const Index = () => {
               {step === "datetime" && (
                 <div>
                   <p className="text-xs text-muted-foreground mb-3">Select a date</p>
-                  <div className="mb-4 flex gap-2 overflow-x-auto pb-2">
+                  <div className="mb-4 flex gap-2 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none]">
                     {dateOptions.map((d) => {
                       const dateObj = new Date(d + "T00:00:00");
                       const dayName = dateObj.toLocaleDateString("en", { weekday: "short" });
@@ -539,13 +610,13 @@ const Index = () => {
                       {availableSlots.length === 0 ? (
                         <p className="py-4 text-center text-xs text-muted-foreground">No available slots for this date</p>
                       ) : (
-                        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                        <div className="grid max-w-full grid-cols-2 gap-2 sm:grid-cols-3">
                           {availableSlots.map(({ time, booked }) => (
                             <button
                               key={time}
                               onClick={() => !booked && setSelectedTime(time)}
                               disabled={booked}
-                              className={`rounded-lg border px-2 py-2 text-center text-[11px] font-medium transition-all sm:text-xs ${
+                              className={`min-w-0 rounded-lg border px-3 py-2 text-center text-[11px] font-medium transition-all sm:text-xs whitespace-nowrap ${
                                 booked
                                   ? "border-border bg-secondary/50 text-muted-foreground/40 line-through cursor-not-allowed"
                                   : selectedTime === time
@@ -560,7 +631,7 @@ const Index = () => {
                         </div>
                       )}
 
-                      {selectedTime && (
+                      {selectedTime && (effectiveStaff || selectedStaff) && (
                         <button
                           onClick={goNext}
                           className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-primary py-3 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-[1.02] sm:text-sm"
@@ -590,7 +661,7 @@ const Index = () => {
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Specialist</span>
-                        <span className="font-medium text-card-foreground">{selectedStaff?.name}</span>
+                        <span className="font-medium text-card-foreground">{effectiveStaff?.name ?? (anyProfessional ? "Any available" : "")}</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Date & Time</span>
@@ -631,9 +702,38 @@ const Index = () => {
                     />
                   </div>
 
+                  {/* Payment method */}
+                  <div className="mt-4">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2">Payment method</p>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {[
+                        { id: "apple_pay", label: "Apple Pay", Icon: SiApplepay },
+                        { id: "google_pay", label: "Google Pay", Icon: SiGooglepay },
+                        { id: "card", label: "Card", Icon: CreditCard },
+                        { id: "tabby", label: "Tabby", Icon: SiAfterpay },
+                        { id: "tamara", label: "Tamara", Icon: SiAfterpay },
+                      ].map((pm) => {
+                        const Icon = pm.Icon;
+                        return (
+                        <button
+                          key={pm.id}
+                          type="button"
+                          onClick={() => setPaymentMethod(pm.id)}
+                          className={`flex flex-col items-center gap-1 rounded-xl border px-3 py-2.5 text-[11px] font-medium transition-all sm:text-xs ${
+                            paymentMethod === pm.id ? "border-primary bg-primary/5 text-primary" : "border-border hover:border-primary/40"
+                          }`}
+                        >
+                          <Icon className="h-5 w-5 shrink-0" />
+                          {pm.label}
+                        </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   <button
                     onClick={handleBooking}
-                    disabled={createBooking.isPending || !bookingForm.name}
+                    disabled={createBooking.isPending || !bookingForm.name || !paymentMethod}
                     className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-primary py-3 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-[1.02] disabled:opacity-50 sm:text-sm"
                   >
                     {createBooking.isPending ? "Booking..." : "Confirm booking"}
@@ -641,47 +741,16 @@ const Index = () => {
                   </button>
                 </div>
               )}
+              </>
+              )}
             </div>
           </div>
-        </div>
-      )}
-
-      {/* Confirmation modal */}
-      {showConfirmation && selectedService && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4 backdrop-blur-sm">
-          <div className="animate-slide-in-right w-full max-w-sm rounded-2xl bg-card p-5 shadow-2xl sm:p-6">
-            <div className="mb-4 flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary">
-                <Check className="h-5 w-5 text-primary-foreground" />
-              </div>
-              <div>
-                <p className="text-sm font-bold text-card-foreground sm:text-base">Booking confirmed!</p>
-                <p className="text-[11px] text-muted-foreground">We'll see you soon</p>
-              </div>
-            </div>
-
-            <div className="space-y-2 text-xs sm:text-sm">
-              <div className="flex justify-between"><span className="text-muted-foreground">Service</span><span className="font-medium">{selectedService.name}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Specialist</span><span className="font-medium">{selectedStaff?.name}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Location</span><span className="font-medium">{selectedLocation?.name}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Date</span><span className="font-medium">{selectedDate && new Date(selectedDate + "T00:00:00").toLocaleDateString("en", { weekday: "short", month: "short", day: "numeric" })}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Time</span><span className="font-medium">{selectedTime && formatTime12(selectedTime)}</span></div>
-              <div className="flex justify-between border-t border-border pt-2"><span className="font-bold">Total</span><span className="font-bold">${Number(selectedService.price).toFixed(0)}</span></div>
-            </div>
-
-            <button
-              onClick={() => { setShowConfirmation(false); clearSelection(); }}
-              className="mt-4 w-full rounded-full bg-primary px-6 py-3 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-[1.02] sm:text-sm"
-            >
-              Done
-            </button>
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
 
       {/* Mobile bottom bar */}
       {!panelOpen && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-between border-t border-hero-muted/20 bg-hero/90 px-4 py-3 backdrop-blur-md md:hidden">
+        <div className="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-between border-t border-hero-muted/20 bg-hero/90 px-6 py-3 backdrop-blur-md md:hidden sm:px-10">
           <p className="text-[10px] font-medium uppercase tracking-wider text-hero-muted">{tenantName}</p>
           <button
             onClick={() => setPanelOpen(true)}

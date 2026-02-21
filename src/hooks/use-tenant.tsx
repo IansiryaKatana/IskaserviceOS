@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/use-auth";
 
 export interface TenantThemeConfig {
   primary_color: string;
@@ -22,6 +23,7 @@ export interface Tenant {
   theme_config: TenantThemeConfig;
   deployment_type: string;
   status: string;
+  onboarding_status?: string | null;
 }
 
 interface TenantCtx {
@@ -37,15 +39,11 @@ const DEFAULT_TENANT_ID = "00000000-0000-0000-0000-000000000001";
 const TenantContext = createContext<TenantCtx | undefined>(undefined);
 
 export function TenantProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Load default tenant on mount
-  useEffect(() => {
-    loadTenant(DEFAULT_TENANT_ID);
-  }, []);
-
-  const loadTenant = async (id: string) => {
+  const loadTenant = useCallback(async (id: string) => {
     try {
       const { data, error } = await supabase
         .from("tenants")
@@ -74,7 +72,28 @@ export function TenantProvider({ children }: { children: ReactNode }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  // Load user's tenant when logged in, else default
+  useEffect(() => {
+    if (!user) {
+      loadTenant(DEFAULT_TENANT_ID);
+      return;
+    }
+    const loadUserTenant = async () => {
+      try {
+        const { data: tid, error } = await supabase.rpc("get_user_tenant_id", { _user_id: user.id });
+        if (!error && tid) {
+          await loadTenant(tid);
+          return;
+        }
+      } catch (_) {
+        /* fallback to default */
+      }
+      loadTenant(DEFAULT_TENANT_ID);
+    };
+    loadUserTenant();
+  }, [user?.id, loadTenant]);
 
   const setTenantBySlug = useCallback(async (slug: string) => {
     setLoading(true);

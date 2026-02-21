@@ -32,7 +32,7 @@ import {
   Plus,
   Edit2,
   Trash2,
-  LogOut,
+  ArrowUpRight,
   X,
   Globe,
   Users,
@@ -49,13 +49,18 @@ import {
   Image as ImageIcon,
   Upload,
 } from "lucide-react";
-import { toast } from "sonner";
+import { DashboardLayout } from "@/components/DashboardLayout";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { RecordsPagination } from "@/components/RecordsPagination";
+import { useFeedback } from "@/hooks/use-feedback";
+import { usePagination } from "@/hooks/use-pagination";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 import { useSiteSettings, useUpsertSiteSetting } from "@/hooks/use-site-settings";
+import { usePlatformPaymentSettings, type PaymentProvider } from "@/hooks/use-platform-payment-settings";
 
-type Tab = "overview" | "tenants" | "admins" | "subscriptions" | "deployments" | "roles" | "media";
+type Tab = "overview" | "tenants" | "admins" | "subscriptions" | "deployments" | "roles" | "payments" | "media";
 
 const BUSINESS_TYPES = [
   { value: "salon", label: "Salon / Barbershop" },
@@ -92,6 +97,7 @@ const DEFAULT_THEME: ThemeForm = {
 const MediaManagement = () => {
   const { data: settings } = useSiteSettings(null);
   const upsertSetting = useUpsertSiteSetting();
+  const { showSuccess, showError } = useFeedback();
   const [desktopImage, setDesktopImage] = useState("");
   const [mobileImage, setMobileImage] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -132,9 +138,9 @@ const MediaManagement = () => {
       if (type === "desktop") setDesktopImage(publicUrl);
       else setMobileImage(publicUrl);
 
-      toast.success(`${type === "desktop" ? "Desktop" : "Mobile"} image uploaded`);
+      showSuccess("Image uploaded", `${type === "desktop" ? "Desktop" : "Mobile"} image saved successfully.`);
     } catch (err: any) {
-      toast.error(err.message || "Failed to upload image");
+      showError("Upload failed", err.message || "Failed to upload image");
     } finally {
       setUploading(false);
     }
@@ -149,9 +155,9 @@ const MediaManagement = () => {
       });
       if (type === "desktop") setDesktopImage(url);
       else setMobileImage(url);
-      toast.success(`${type === "desktop" ? "Desktop" : "Mobile"} image updated`);
+      showSuccess("Image updated", `${type === "desktop" ? "Desktop" : "Mobile"} image saved successfully.`);
     } catch (err: any) {
-      toast.error(err.message || "Failed to update image");
+      showError("Update failed", err.message || "Failed to update image");
     }
   };
 
@@ -265,8 +271,18 @@ const MediaManagement = () => {
   );
 };
 
+interface ConfirmState {
+  open: boolean;
+  title: string;
+  description: string;
+  confirmLabel?: string;
+  onConfirm: () => Promise<void>;
+}
+
 const Platform = () => {
   const { signOut } = useAuth();
+  const { showSuccess, showError } = useFeedback();
+  const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
   const { data: tenants, isLoading: loadingTenants } = useTenants();
   const { data: stats } = usePlatformStats();
   const { data: subscriptions } = useTenantSubscriptions();
@@ -327,6 +343,13 @@ const Platform = () => {
 
   // User Roles
   const { data: allUserRoles, isLoading: loadingRoles } = useAllUserRoles();
+
+  // Pagination (6 per page)
+  const tenantsPag = usePagination(tenants, 6);
+  const adminsPag = usePagination(platformAdmins, 6);
+  const subscriptionsPag = usePagination(subscriptions, 6);
+  const deploymentsPag = usePagination(deploymentConfigs, 6);
+  const rolesPag = usePagination(allUserRoles, 6);
   const createUserRole = useCreateUserRole();
   const updateUserRole = useUpdateUserRole();
   const deleteUserRole = useDeleteUserRole();
@@ -339,6 +362,40 @@ const Platform = () => {
   });
   const [searchEmail, setSearchEmail] = useState("");
   const [searchResults, setSearchResults] = useState<any[]>([]);
+
+  // Platform Payment Settings (Stripe / PayPal)
+  const { data: paymentSettings, update: updatePaymentSettings, isUpdating: savingPaymentSettings } = usePlatformPaymentSettings();
+  const [paymentForm, setPaymentForm] = useState({
+    provider: "" as PaymentProvider,
+    stripePublishableKey: "",
+    stripePaymentLinkStarter: "",
+    stripePaymentLinkLifetime: "",
+    paypalClientId: "",
+    paypalPaymentUrlStarter: "",
+    paypalPaymentUrlLifetime: "",
+  });
+  const paymentFormSynced = paymentForm.provider === paymentSettings.provider
+    && paymentForm.stripePublishableKey === paymentSettings.stripePublishableKey
+    && paymentForm.stripePaymentLinkStarter === paymentSettings.stripePaymentLinkStarter
+    && paymentForm.stripePaymentLinkLifetime === paymentSettings.stripePaymentLinkLifetime
+    && paymentForm.paypalClientId === paymentSettings.paypalClientId
+    && paymentForm.paypalPaymentUrlStarter === paymentSettings.paypalPaymentUrlStarter
+    && paymentForm.paypalPaymentUrlLifetime === paymentSettings.paypalPaymentUrlLifetime;
+
+  // Sync payment form when opening Payments tab
+  useEffect(() => {
+    if (tab === "payments") {
+      setPaymentForm({
+        provider: paymentSettings.provider,
+        stripePublishableKey: paymentSettings.stripePublishableKey,
+        stripePaymentLinkStarter: paymentSettings.stripePaymentLinkStarter,
+        stripePaymentLinkLifetime: paymentSettings.stripePaymentLinkLifetime,
+        paypalClientId: paymentSettings.paypalClientId,
+        paypalPaymentUrlStarter: paymentSettings.paypalPaymentUrlStarter,
+        paypalPaymentUrlLifetime: paymentSettings.paypalPaymentUrlLifetime,
+      });
+    }
+  }, [tab, paymentSettings.provider, paymentSettings.stripePublishableKey, paymentSettings.stripePaymentLinkStarter, paymentSettings.stripePaymentLinkLifetime, paymentSettings.paypalClientId, paymentSettings.paypalPaymentUrlStarter, paymentSettings.paypalPaymentUrlLifetime]);
 
   const openNew = () => {
     setEditing(null);
@@ -404,23 +461,23 @@ const Platform = () => {
       if (error) throw error;
       setSearchResults(profiles || []);
     } catch (err: any) {
-      toast.error(err.message || "Failed to search users");
+      showError("Search failed", err.message || "Failed to search users");
     }
   };
 
   // Platform Admin handlers
   const handleCreateAdmin = async () => {
     if (!adminUserId) {
-      toast.error("User ID is required");
+      showError("Required", "User ID is required");
       return;
     }
     try {
       await createPlatformAdmin.mutateAsync(adminUserId);
-      toast.success("Platform admin created");
+      showSuccess("Admin created", "Platform admin created successfully.");
       setShowAdminForm(false);
       setAdminUserId("");
     } catch (err: any) {
-      toast.error(err.message || "Failed to create admin");
+      showError("Failed", err.message || "Failed to create admin");
     }
   };
 
@@ -445,7 +502,7 @@ const Platform = () => {
 
   const handleSaveSubscription = async () => {
     if (!subscriptionForm.tenant_id) {
-      toast.error("Tenant is required");
+      showError("Required", "Tenant is required");
       return;
     }
     try {
@@ -456,7 +513,7 @@ const Platform = () => {
           stripe_customer_id: subscriptionForm.stripe_customer_id || null,
           stripe_subscription_id: subscriptionForm.stripe_subscription_id || null,
         });
-        toast.success("Subscription updated");
+        showSuccess("Saved", "Subscription updated.");
       } else {
         await createSubscription.mutateAsync({
           tenant_id: subscriptionForm.tenant_id,
@@ -465,11 +522,11 @@ const Platform = () => {
           stripe_customer_id: subscriptionForm.stripe_customer_id || null,
           stripe_subscription_id: subscriptionForm.stripe_subscription_id || null,
         });
-        toast.success("Subscription created");
+        showSuccess("Created", "Subscription created.");
       }
       setShowSubscriptionForm(false);
     } catch (err: any) {
-      toast.error(err.message || "Failed to save subscription");
+      showError("Failed", err.message || "Failed to save subscription");
     }
   };
 
@@ -492,11 +549,11 @@ const Platform = () => {
 
   const handleSaveDeployment = async () => {
     if (!deploymentForm.deployment_type) {
-      toast.error("Deployment type is required");
+      showError("Required", "Deployment type is required");
       return;
     }
     if (deploymentForm.deployment_type === "external" && (!deploymentForm.supabase_url || !deploymentForm.supabase_anon_key)) {
-      toast.error("Supabase URL and Anon Key are required for external deployment");
+      showError("Required", "Supabase URL and Anon Key are required for external deployment");
       return;
     }
     try {
@@ -507,10 +564,10 @@ const Platform = () => {
           supabase_url: deploymentForm.supabase_url || null,
           supabase_anon_key: deploymentForm.supabase_anon_key || null,
         });
-        toast.success("Deployment config updated");
+        showSuccess("Saved", "Deployment config updated.");
       } else {
         if (!editing?.id) {
-          toast.error("Please select a tenant first");
+          showError("Required", "Please select a tenant first");
           return;
         }
         await createDeploymentConfig.mutateAsync({
@@ -523,7 +580,7 @@ const Platform = () => {
       }
       setShowDeploymentForm(false);
     } catch (err: any) {
-      toast.error(err.message || "Failed to save deployment config");
+      showError("Failed", err.message || "Failed to save deployment config");
     }
   };
 
@@ -548,7 +605,7 @@ const Platform = () => {
 
   const handleSaveRole = async () => {
     if (!roleForm.user_id) {
-      toast.error("User ID is required");
+      showError("Required", "User ID is required");
       return;
     }
     try {
@@ -558,7 +615,7 @@ const Platform = () => {
           role: roleForm.role,
           tenant_id: roleForm.tenant_id || null,
         });
-        toast.success("Role updated");
+        showSuccess("Saved", "Role updated.");
       } else {
         await createUserRole.mutateAsync({
           user_id: roleForm.user_id,
@@ -569,13 +626,13 @@ const Platform = () => {
       }
       setShowRoleForm(false);
     } catch (err: any) {
-      toast.error(err.message || "Failed to save role");
+      showError("Failed", err.message || "Failed to save role");
     }
   };
 
   const handleSave = async () => {
     if (!form.name || !form.slug) {
-      toast.error("Name and slug are required");
+      showError("Required", "Name and slug are required");
       return;
     }
     try {
@@ -613,7 +670,7 @@ const Platform = () => {
             });
           }
         }
-        toast.success("Tenant updated");
+        showSuccess("Saved", "Tenant updated.");
       } else {
         const newTenant = await createTenant.mutateAsync({
           name: form.name,
@@ -636,7 +693,7 @@ const Platform = () => {
       }
       setShowForm(false);
     } catch (err: any) {
-      toast.error(err.message || "Failed to save tenant");
+      showError("Failed", err.message || "Failed to save tenant");
     }
   };
 
@@ -664,45 +721,56 @@ const Platform = () => {
     </button>
   );
 
-  return (
-    <div className="min-h-screen bg-background font-body">
-      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-card px-4 py-3 sm:px-6">
-        <div className="flex items-center gap-3">
-          <a href="/" className="text-muted-foreground hover:text-foreground">
-            <ChevronLeft className="h-4 w-4" />
-          </a>
-          <h1 className="font-display text-sm font-bold text-foreground sm:text-base">Platform Admin</h1>
-          <span className="rounded bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-destructive">Super Admin</span>
-        </div>
-        <div className="flex items-center gap-4">
-          <button onClick={() => setTab("overview")} className={`flex items-center gap-1.5 text-xs font-medium ${tab === "overview" ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}>
-            <LayoutDashboard className="h-3.5 w-3.5" />Overview
-          </button>
-          <button onClick={() => setTab("tenants")} className={`flex items-center gap-1.5 text-xs font-medium ${tab === "tenants" ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}>
-            <Building2 className="h-3.5 w-3.5" />Tenants
-          </button>
-          <button onClick={() => setTab("admins")} className={`flex items-center gap-1.5 text-xs font-medium ${tab === "admins" ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}>
-            <Shield className="h-3.5 w-3.5" />Admins
-          </button>
-          <button onClick={() => setTab("subscriptions")} className={`flex items-center gap-1.5 text-xs font-medium ${tab === "subscriptions" ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}>
-            <CreditCard className="h-3.5 w-3.5" />Subscriptions
-          </button>
-          <button onClick={() => setTab("deployments")} className={`flex items-center gap-1.5 text-xs font-medium ${tab === "deployments" ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}>
-            <Key className="h-3.5 w-3.5" />Deployments
-          </button>
-          <button onClick={() => setTab("roles")} className={`flex items-center gap-1.5 text-xs font-medium ${tab === "roles" ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}>
-            <UserCog className="h-3.5 w-3.5" />Roles
-          </button>
-          <button onClick={() => setTab("media")} className={`flex items-center gap-1.5 text-xs font-medium ${tab === "media" ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}>
-            <ImageIcon className="h-3.5 w-3.5" />Media
-          </button>
-          <button onClick={() => signOut()} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-destructive">
-            <LogOut className="h-3.5 w-3.5" />
-          </button>
-        </div>
-      </header>
+  const navItems: { tab: Tab; label: string; icon: React.ReactNode }[] = [
+    { tab: "overview", label: "Overview", icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
+    { tab: "tenants", label: "Tenants", icon: <Building2 className="h-3.5 w-3.5" /> },
+    { tab: "admins", label: "Admins", icon: <Shield className="h-3.5 w-3.5" /> },
+    { tab: "subscriptions", label: "Subscriptions", icon: <CreditCard className="h-3.5 w-3.5" /> },
+    { tab: "deployments", label: "Deployments", icon: <Key className="h-3.5 w-3.5" /> },
+    { tab: "roles", label: "Roles", icon: <UserCog className="h-3.5 w-3.5" /> },
+    { tab: "payments", label: "Payments", icon: <CreditCard className="h-3.5 w-3.5" /> },
+    { tab: "media", label: "Media", icon: <ImageIcon className="h-3.5 w-3.5" /> },
+  ];
 
-      <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
+  const brand = (
+    <>
+      <a
+        href="/"
+        className="flex shrink-0 items-center justify-center rounded-md p-1 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        aria-label="Back to home"
+      >
+        <ChevronLeft className="h-5 w-5" />
+      </a>
+      <span className="min-w-0 truncate font-display text-sm font-bold group-data-[collapsible=icon]:hidden">
+        Platform Admin
+      </span>
+    </>
+  );
+
+  const headerRight = (
+    <span className="rounded bg-destructive/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-destructive">Super Admin</span>
+  );
+
+  return (
+    <DashboardLayout
+      brand={brand}
+      headerRight={headerRight}
+      navItems={navItems.map(({ tab: t, label, icon }) => ({ key: t, label, icon }))}
+      activeKey={tab}
+      onNavSelect={(key) => setTab(key as Tab)}
+      footer={
+        <button
+          type="button"
+          onClick={() => signOut()}
+          className="flex w-full items-center justify-between gap-2 rounded-t-lg rounded-b-none bg-black px-4 py-3 text-sm font-medium text-white hover:bg-black/90 group-data-[collapsible=icon]:!px-3 group-data-[collapsible=icon]:!py-2"
+        >
+          <span className="group-data-[collapsible=icon]:hidden">Logout</span>
+          <ArrowUpRight className="h-4 w-4 shrink-0" />
+        </button>
+      }
+      className="min-h-0"
+    >
+      <main className="mx-auto w-full max-w-5xl flex-1 overflow-auto px-4 py-6 sm:px-6 sm:py-8">
         {/* Overview */}
         {tab === "overview" && (
           <div>
@@ -768,7 +836,7 @@ const Platform = () => {
               </div>
             ) : (
               <div className="space-y-3">
-                {tenants.map((t) => {
+                {tenantsPag.paginatedItems.map((t) => {
                   const sub = getSubscription(t.id);
                   return (
                     <div key={t.id} className="group rounded-xl border border-border bg-card p-4 hover:shadow-md transition-shadow">
@@ -805,8 +873,20 @@ const Platform = () => {
                             </button>
                             <button
                               onClick={() => {
-                                if (confirm(`Delete tenant "${t.name}"? This cannot be undone.`))
-                                  deleteTenant.mutateAsync(t.id).then(() => toast.success("Deleted")).catch(() => toast.error("Failed"));
+                                setConfirmState({
+                                  open: true,
+                                  title: "Delete tenant",
+                                  description: `Delete "${t.name}"? This cannot be undone.`,
+                                  onConfirm: async () => {
+                                    try {
+                                      await deleteTenant.mutateAsync(t.id);
+                                      showSuccess("Deleted", "Tenant deleted successfully.");
+                                    } catch (e) {
+                                      showError("Failed", "Could not delete tenant.");
+                                      throw e;
+                                    }
+                                  },
+                                });
                               }}
                               className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                             >
@@ -818,6 +898,7 @@ const Platform = () => {
                     </div>
                   );
                 })}
+                <RecordsPagination page={tenantsPag.page} totalPages={tenantsPag.totalPages} onPageChange={tenantsPag.setPage} />
               </div>
             )}
           </div>
@@ -860,8 +941,20 @@ const Platform = () => {
                       </div>
                       <button
                         onClick={() => {
-                          if (confirm("Remove platform admin access?"))
-                            deletePlatformAdmin.mutateAsync(admin.id).then(() => toast.success("Removed")).catch(() => toast.error("Failed"));
+                            setConfirmState({
+                              open: true,
+                              title: "Remove admin",
+                              description: "Remove platform admin access?",
+                              onConfirm: async () => {
+                                try {
+                                  await deletePlatformAdmin.mutateAsync(admin.id);
+                                  showSuccess("Removed", "Platform admin access removed.");
+                                } catch (e) {
+                                  showError("Failed", "Could not remove admin.");
+                                  throw e;
+                                }
+                              },
+                            });
                         }}
                         className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
                       >
@@ -870,6 +963,7 @@ const Platform = () => {
                     </div>
                   </div>
                 ))}
+                <RecordsPagination page={adminsPag.page} totalPages={adminsPag.totalPages} onPageChange={adminsPag.setPage} />
               </div>
             )}
           </div>
@@ -922,8 +1016,20 @@ const Platform = () => {
                             </button>
                             <button
                               onClick={() => {
-                                if (confirm("Delete this subscription?"))
-                                  deleteSubscription.mutateAsync(sub.id).then(() => toast.success("Deleted")).catch(() => toast.error("Failed"));
+                                setConfirmState({
+                                  open: true,
+                                  title: "Delete subscription",
+                                  description: "Delete this subscription?",
+                                  onConfirm: async () => {
+                                    try {
+                                      await deleteSubscription.mutateAsync(sub.id);
+                                      showSuccess("Deleted", "Subscription deleted.");
+                                    } catch (e) {
+                                      showError("Failed", "Could not delete subscription.");
+                                      throw e;
+                                    }
+                                  },
+                                });
                               }}
                               className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                             >
@@ -935,8 +1041,118 @@ const Platform = () => {
                     </div>
                   );
                 })}
+                <RecordsPagination page={subscriptionsPag.page} totalPages={subscriptionsPag.totalPages} onPageChange={subscriptionsPag.setPage} />
               </div>
             )}
+          </div>
+        )}
+
+        {/* Payments Tab - Stripe / PayPal config for collecting payments from tenants */}
+        {tab === "payments" && (
+          <div>
+            <h2 className="mb-4 font-display text-lg font-bold text-foreground sm:mb-6 sm:text-xl">Payment Settings</h2>
+            <p className="mb-6 text-sm text-muted-foreground">
+              Configure how you collect payments from customers (e.g. salon owners subscribing to plans). Use Stripe Payment Links and/or PayPal. Secret keys must be set in your environment (Supabase/Netlify); only public keys and payment links are stored here.
+            </p>
+            <div className="max-w-xl space-y-6 rounded-xl border border-border bg-card p-6">
+              <div>
+                <label className="text-[11px] font-medium text-muted-foreground">Accept payments via</label>
+                <select
+                  value={paymentForm.provider}
+                  onChange={(e) => setPaymentForm((f) => ({ ...f, provider: e.target.value as PaymentProvider }))}
+                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="">None (contact only)</option>
+                  <option value="stripe">Stripe (card)</option>
+                  <option value="paypal">PayPal</option>
+                  <option value="both">Stripe and PayPal</option>
+                </select>
+              </div>
+
+              {(paymentForm.provider === "stripe" || paymentForm.provider === "both") && (
+                <>
+                  <div>
+                    <label className="text-[11px] font-medium text-muted-foreground">Stripe Publishable Key</label>
+                    <input
+                      type="text"
+                      value={paymentForm.stripePublishableKey}
+                      onChange={(e) => setPaymentForm((f) => ({ ...f, stripePublishableKey: e.target.value }))}
+                      placeholder="pk_live_... or pk_test_..."
+                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-medium text-muted-foreground">Stripe Payment Link – Starter plan ($45/mo)</label>
+                    <input
+                      type="url"
+                      value={paymentForm.stripePaymentLinkStarter}
+                      onChange={(e) => setPaymentForm((f) => ({ ...f, stripePaymentLinkStarter: e.target.value }))}
+                      placeholder="https://buy.stripe.com/..."
+                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                    <p className="mt-1 text-[10px] text-muted-foreground">Create in Stripe Dashboard → Payment Links</p>
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-medium text-muted-foreground">Stripe Payment Link – Lifetime plan ($500)</label>
+                    <input
+                      type="url"
+                      value={paymentForm.stripePaymentLinkLifetime}
+                      onChange={(e) => setPaymentForm((f) => ({ ...f, stripePaymentLinkLifetime: e.target.value }))}
+                      placeholder="https://buy.stripe.com/..."
+                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                </>
+              )}
+
+              {(paymentForm.provider === "paypal" || paymentForm.provider === "both") && (
+                <>
+                  <div>
+                    <label className="text-[11px] font-medium text-muted-foreground">PayPal Client ID</label>
+                    <input
+                      type="text"
+                      value={paymentForm.paypalClientId}
+                      onChange={(e) => setPaymentForm((f) => ({ ...f, paypalClientId: e.target.value }))}
+                      placeholder="From PayPal Developer Dashboard"
+                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-medium text-muted-foreground">PayPal payment link – Starter plan ($45/mo)</label>
+                    <input
+                      type="url"
+                      value={paymentForm.paypalPaymentUrlStarter}
+                      onChange={(e) => setPaymentForm((f) => ({ ...f, paypalPaymentUrlStarter: e.target.value }))}
+                      placeholder="https://www.paypal.com/invoice/... or paypal.me link"
+                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                    <p className="mt-1 text-[10px] text-muted-foreground">Create in PayPal → Payment Links & Buttons, set price to $45</p>
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-medium text-muted-foreground">PayPal payment link – Lifetime plan ($500)</label>
+                    <input
+                      type="url"
+                      value={paymentForm.paypalPaymentUrlLifetime}
+                      onChange={(e) => setPaymentForm((f) => ({ ...f, paypalPaymentUrlLifetime: e.target.value }))}
+                      placeholder="https://www.paypal.com/invoice/... or paypal.me link"
+                      className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                    <p className="mt-1 text-[10px] text-muted-foreground">Create a second link in PayPal with price $500</p>
+                  </div>
+                </>
+              )}
+
+              <button
+                onClick={async () => {
+                  await updatePaymentSettings(paymentForm);
+                  showSuccess("Saved", "Payment settings saved.");
+                }}
+                disabled={savingPaymentSettings || paymentFormSynced}
+                className="rounded-full bg-primary px-4 py-2 text-xs font-semibold uppercase tracking-wider text-primary-foreground hover:scale-[1.02] transition-transform disabled:opacity-50"
+              >
+                {savingPaymentSettings ? "Saving..." : paymentFormSynced ? "Saved" : "Save payment settings"}
+              </button>
+            </div>
           </div>
         )}
 
@@ -955,7 +1171,7 @@ const Platform = () => {
               </div>
             ) : (
               <div className="space-y-3">
-                {deploymentConfigs.map((config) => {
+                {deploymentsPag.paginatedItems.map((config) => {
                   const tenant = tenants?.find(t => t.id === config.tenant_id);
                   return (
                     <div key={config.id} className="group rounded-xl border border-border bg-card p-4 hover:shadow-md transition-shadow">
@@ -977,8 +1193,20 @@ const Platform = () => {
                           </button>
                           <button
                             onClick={() => {
-                              if (confirm("Delete this deployment config?"))
-                                deleteDeploymentConfig.mutateAsync(config.id).then(() => toast.success("Deleted")).catch(() => toast.error("Failed"));
+                              setConfirmState({
+                                open: true,
+                                title: "Delete deployment config",
+                                description: "Delete this deployment config?",
+                                onConfirm: async () => {
+                                  try {
+                                    await deleteDeploymentConfig.mutateAsync(config.id);
+                                    showSuccess("Deleted", "Deployment config deleted.");
+                                  } catch (e) {
+                                    showError("Failed", "Could not delete deployment config.");
+                                    throw e;
+                                  }
+                                },
+                              });
                             }}
                             className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                           >
@@ -989,6 +1217,7 @@ const Platform = () => {
                     </div>
                   );
                 })}
+                <RecordsPagination page={deploymentsPag.page} totalPages={deploymentsPag.totalPages} onPageChange={deploymentsPag.setPage} />
               </div>
             )}
           </div>
@@ -1012,7 +1241,7 @@ const Platform = () => {
               </div>
             ) : (
               <div className="space-y-3">
-                {allUserRoles.map((role: any) => {
+                {rolesPag.paginatedItems.map((role: any) => {
                   const tenant = role.tenants;
                   return (
                     <div key={role.id} className="group rounded-xl border border-border bg-card p-4 hover:shadow-md transition-shadow">
@@ -1036,8 +1265,20 @@ const Platform = () => {
                           </button>
                           <button
                             onClick={() => {
-                              if (confirm("Delete this role?"))
-                                deleteUserRole.mutateAsync(role.id).then(() => toast.success("Deleted")).catch(() => toast.error("Failed"));
+                              setConfirmState({
+                                open: true,
+                                title: "Delete role",
+                                description: "Delete this role?",
+                              onConfirm: async () => {
+                                try {
+                                  await deleteUserRole.mutateAsync(role.id);
+                                  showSuccess("Deleted", "Role deleted.");
+                                } catch (e) {
+                                  showError("Failed", "Could not delete role.");
+                                  throw e;
+                                }
+                              },
+                              });
                             }}
                             className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                           >
@@ -1048,6 +1289,7 @@ const Platform = () => {
                     </div>
                   );
                 })}
+                <RecordsPagination page={rolesPag.page} totalPages={rolesPag.totalPages} onPageChange={rolesPag.setPage} />
               </div>
             )}
           </div>
@@ -1229,7 +1471,7 @@ const Platform = () => {
                     >
                       <option value="free">Free</option>
                       <option value="starter">Starter</option>
-                      <option value="pro">Pro</option>
+                      <option value="lifetime">Lifetime</option>
                       <option value="enterprise">Enterprise</option>
                     </select>
                   </div>
@@ -1384,7 +1626,7 @@ const Platform = () => {
                   >
                     <option value="free">Free</option>
                     <option value="starter">Starter</option>
-                    <option value="pro">Pro</option>
+                    <option value="lifetime">Lifetime</option>
                     <option value="enterprise">Enterprise</option>
                   </select>
                 </div>
@@ -1617,7 +1859,18 @@ const Platform = () => {
           </div>
         </div>
       )}
-    </div>
+      {confirmState && (
+        <ConfirmDialog
+          open={confirmState.open}
+          onOpenChange={(open) => !open && setConfirmState(null)}
+          title={confirmState.title}
+          description={confirmState.description}
+          confirmLabel={confirmState.confirmLabel ?? "Confirm"}
+          variant="destructive"
+          onConfirm={confirmState.onConfirm}
+        />
+      )}
+    </DashboardLayout>
   );
 };
 

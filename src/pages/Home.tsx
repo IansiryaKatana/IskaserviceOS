@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useSiteSetting } from "@/hooks/use-site-settings";
 import { ArrowRight, ArrowUpRight, Building2, Scissors, Sparkles, Car, Stethoscope, Dumbbell, X, Phone, Mail } from "lucide-react";
 import { useCreateTenantRequest } from "@/hooks/use-tenant-requests";
-import { toast } from "sonner";
+import { useFeedback } from "@/hooks/use-feedback";
 
 interface TenantPreview {
   id: string;
@@ -32,6 +32,7 @@ const BUSINESS_LABELS: Record<string, string> = {
 };
 
 const Home = () => {
+  const { showSuccess, showError } = useFeedback();
   const navigate = useNavigate();
   const location = useLocation();
   const [tenants, setTenants] = useState<TenantPreview[]>([]);
@@ -307,7 +308,7 @@ const Home = () => {
               <button
                 onClick={async () => {
                   if (!requestForm.name || !requestForm.email) {
-                    toast.error("Name and email are required");
+                    showError("Required", "Name and email are required");
                     return;
                   }
                   try {
@@ -319,11 +320,11 @@ const Home = () => {
                       message: requestForm.message || null,
                       business_type: requestForm.business_type || null,
                     });
-                    toast.success("Request submitted! We'll contact you soon.");
+                    showSuccess("Request submitted", "We'll contact you soon.");
                     setShowRequestDialog(false);
                     setRequestForm({ name: "", email: "", phone: "", company: "", message: "", business_type: "" });
                   } catch (err: any) {
-                    toast.error(err.message || "Failed to submit request");
+                    showError("Failed", err.message || "Failed to submit request");
                   }
                 }}
                 disabled={createRequest.isPending}

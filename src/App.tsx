@@ -1,6 +1,5 @@
-import { Toaster } from "@/components/ui/toaster";
-import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { FeedbackProvider } from "@/hooks/use-feedback";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/hooks/use-auth";
@@ -10,6 +9,8 @@ import { ProtectedRoute } from "@/components/ProtectedRoute";
 import Home from "./pages/Home";
 import Index from "./pages/Index";
 import Login from "./pages/Login";
+import Signup from "./pages/Signup";
+import Onboarding from "./pages/Onboarding";
 import Admin from "./pages/Admin";
 import Platform from "./pages/Platform";
 import Account from "./pages/Account";
@@ -23,12 +24,11 @@ const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <TenantProvider>
-      <AuthProvider>
+    <AuthProvider>
+      <TenantProvider>
         <ThemeInjector />
         <TooltipProvider>
-          <Toaster />
-          <Sonner />
+          <FeedbackProvider>
           <BrowserRouter
             future={{
               v7_startTransition: true,
@@ -42,6 +42,15 @@ const App = () => (
               <Route path="/t/:slug" element={<TenantPage />} />
               <Route path="/t/:slug/reviews" element={<TenantReviews />} />
               <Route path="/login" element={<Login />} />
+              <Route path="/signup" element={<Signup />} />
+              <Route
+                path="/onboarding"
+                element={
+                  <ProtectedRoute requireAuth>
+                    <Onboarding />
+                  </ProtectedRoute>
+                }
+              />
               <Route
                 path="/admin"
                 element={
@@ -69,9 +78,10 @@ const App = () => (
               <Route path="*" element={<NotFound />} />
             </Routes>
           </BrowserRouter>
+          </FeedbackProvider>
         </TooltipProvider>
-      </AuthProvider>
-    </TenantProvider>
+      </TenantProvider>
+    </AuthProvider>
   </QueryClientProvider>
 );
 

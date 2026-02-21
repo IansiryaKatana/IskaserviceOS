@@ -1,7 +1,8 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useTenant } from "@/hooks/use-tenant";
 import { TenantSwitcher } from "@/components/TenantSwitcher";
+import { TrialBanner } from "@/components/TrialBanner";
 import { Navigate } from "react-router-dom";
 import {
   useAllServices, useCreateService, useUpdateService, useDeleteService,
@@ -18,18 +19,34 @@ import { useClients, useCreateClient, useUpdateClient, useDeleteClient, type Cli
 import { usePayments, useCreatePayment, useUpdatePayment, usePaymentStats, type Payment } from "@/hooks/use-payments";
 import { useStockItems, useCreateStockItem, useUpdateStockItem, useDeleteStockItem, useStockAdjustment, useStockTransactions, type StockItem } from "@/hooks/use-inventory";
 import { usePosSales, useCompletePosSale, usePosSaleStats, type PosCartItem } from "@/hooks/use-pos";
+import { useIsPlatformAdmin } from "@/hooks/use-user-roles";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts";
-import { Plus, Edit2, Trash2, LogOut, Scissors, Calendar, Menu, X, ChevronDown, MapPin, Users, Upload, Tag, Clock, BarChart3, UserCircle, CreditCard, Package, ShoppingCart, Minus } from "lucide-react";
-import { toast } from "sonner";
+import { Plus, Edit2, Trash2, ArrowUpRight, Scissors, Calendar, ChevronDown, MapPin, Users, Upload, Tag, Clock, BarChart3, UserCircle, CreditCard, Package, ShoppingCart, Minus, X, DollarSign, Receipt, Search } from "lucide-react";
+import { DashboardLayout } from "@/components/DashboardLayout";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { RecordsPagination } from "@/components/RecordsPagination";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { useFeedback } from "@/hooks/use-feedback";
+import { usePagination } from "@/hooks/use-pagination";
 
 type Tab = "analytics" | "services" | "bookings" | "locations" | "staff" | "categories" | "schedules" | "clients" | "payments" | "inventory" | "pos";
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
+interface ConfirmState {
+  open: boolean;
+  title: string;
+  description: string;
+  confirmLabel?: string;
+  onConfirm: () => Promise<void>;
+}
+
 const Admin = () => {
   const { user, loading, signOut } = useAuth();
   const { tenant, tenantId } = useTenant();
+  const { showSuccess, showError } = useFeedback();
+  const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
 
   const { data: services, isLoading: loadingServices } = useAllServices(tenantId);
   const { data: bookings, isLoading: loadingBookings } = useBookings(tenantId);
@@ -57,7 +74,6 @@ const Admin = () => {
   const deleteSchedule = useDeleteStaffSchedule();
 
   const [tab, setTab] = useState<Tab>("services");
-  const [mobileMenu, setMobileMenu] = useState(false);
 
   // Service form
   const [editingService, setEditingService] = useState<Service | null>(null);
@@ -96,167 +112,6 @@ const Admin = () => {
     staff_id: "", day_of_week: 1, start_time: "09:00", end_time: "17:00", is_available: true,
   });
   const [editingSchedule, setEditingSchedule] = useState<StaffSchedule | null>(null);
-
-  if (loading) return <div className="flex min-h-screen items-center justify-center bg-background font-body text-sm text-muted-foreground">Loading...</div>;
-  if (!user) return <Navigate to="/login" replace />;
-
-  const tenantName = tenant?.name || "Iska Service OS";
-
-  // Image upload handler
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, field: string) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const url = await uploadServiceImage(file);
-      setServiceForm((f) => ({ ...f, [field]: url }));
-      toast.success("Image uploaded");
-    } catch {
-      toast.error("Upload failed");
-    }
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
-
-  // Service handlers
-  const openNewService = () => {
-    setEditingService(null);
-    const defaultCat = categories?.[0]?.slug || "";
-    setServiceForm({ name: "", description: "", duration_minutes: 30, price: 0, category: defaultCat, is_active: true, sort_order: 0, image_url: "", desktop_image_url: "", mobile_image_url: "" });
-    setShowServiceForm(true);
-  };
-  const openEditService = (s: Service) => {
-    setEditingService(s);
-    setServiceForm({
-      name: s.name, description: s.description || "", duration_minutes: s.duration_minutes,
-      price: Number(s.price), category: s.category, is_active: s.is_active, sort_order: s.sort_order,
-      image_url: s.image_url || "", desktop_image_url: s.desktop_image_url || "", mobile_image_url: s.mobile_image_url || "",
-    });
-    setShowServiceForm(true);
-  };
-  const handleSaveService = async () => {
-    if (!serviceForm.name) { toast.error("Name required"); return; }
-    try {
-      const payload = { ...serviceForm, image_url: serviceForm.image_url || null, desktop_image_url: serviceForm.desktop_image_url || null, mobile_image_url: serviceForm.mobile_image_url || null, tenant_id: tenantId, metadata: null, category_id: null };
-      if (editingService) {
-        await updateService.mutateAsync({ id: editingService.id, ...payload });
-        toast.success("Updated");
-      } else {
-        await createService.mutateAsync(payload);
-        toast.success("Created");
-      }
-      setShowServiceForm(false);
-    } catch { toast.error("Failed"); }
-  };
-
-  // Location handlers
-  const openNewLocation = () => {
-    setEditingLocation(null);
-    setLocationForm({ name: "", address: "", city: "", phone: "", email: "", is_active: true, sort_order: 0, image_url: "" });
-    setShowLocationForm(true);
-  };
-  const openEditLocation = (l: Location) => {
-    setEditingLocation(l);
-    setLocationForm({ name: l.name, address: l.address || "", city: l.city || "", phone: l.phone || "", email: l.email || "", is_active: l.is_active, sort_order: l.sort_order, image_url: l.image_url || "" });
-    setShowLocationForm(true);
-  };
-  const handleSaveLocation = async () => {
-    if (!locationForm.name) { toast.error("Name required"); return; }
-    try {
-      const payload = { ...locationForm, address: locationForm.address || null, city: locationForm.city || null, phone: locationForm.phone || null, email: locationForm.email || null, image_url: locationForm.image_url || null, tenant_id: tenantId, metadata: null };
-      if (editingLocation) {
-        await updateLocation.mutateAsync({ id: editingLocation.id, ...payload });
-      } else {
-        await createLocation.mutateAsync(payload);
-      }
-      toast.success("Saved");
-      setShowLocationForm(false);
-    } catch { toast.error("Failed"); }
-  };
-
-  // Staff handlers
-  const openNewStaff = () => {
-    setEditingStaffMember(null);
-    const defaultCat = categories?.[0]?.slug || "";
-    setStaffForm({ name: "", title: "", category: defaultCat, bio: "", specialties: "", is_active: true, sort_order: 0, image_url: "", location_id: "" });
-    setShowStaffForm(true);
-  };
-  const openEditStaff = (s: Staff) => {
-    setEditingStaffMember(s);
-    setStaffForm({ name: s.name, title: s.title, category: s.category, bio: s.bio || "", specialties: s.specialties?.join(", ") || "", is_active: s.is_active, sort_order: s.sort_order, image_url: s.image_url || "", location_id: s.location_id || "" });
-    setShowStaffForm(true);
-  };
-  const handleSaveStaff = async () => {
-    if (!staffForm.name) { toast.error("Name required"); return; }
-    try {
-      const payload = {
-        name: staffForm.name, title: staffForm.title, category: staffForm.category,
-        bio: staffForm.bio || null, specialties: staffForm.specialties ? staffForm.specialties.split(",").map(s => s.trim()).filter(Boolean) : null,
-        is_active: staffForm.is_active, sort_order: staffForm.sort_order,
-        image_url: staffForm.image_url || null, location_id: staffForm.location_id || null, user_id: null,
-        tenant_id: tenantId, metadata: null,
-      };
-      if (editingStaffMember) {
-        await updateStaffMut.mutateAsync({ id: editingStaffMember.id, ...payload });
-      } else {
-        await createStaff.mutateAsync(payload);
-      }
-      toast.success("Saved");
-      setShowStaffForm(false);
-    } catch { toast.error("Failed"); }
-  };
-
-  // Category handlers
-  const openNewCategory = () => {
-    setEditingCategory(null);
-    setCategoryForm({ name: "", slug: "", description: "", tag_color: "#3b82f6", is_active: true, sort_order: 0 });
-    setShowCategoryForm(true);
-  };
-  const openEditCategory = (c: ServiceCategory) => {
-    setEditingCategory(c);
-    setCategoryForm({ name: c.name, slug: c.slug, description: c.description || "", tag_color: c.tag_color || "#3b82f6", is_active: c.is_active, sort_order: c.sort_order });
-    setShowCategoryForm(true);
-  };
-  const handleSaveCategory = async () => {
-    if (!categoryForm.name || !categoryForm.slug) { toast.error("Name and slug required"); return; }
-    try {
-      const payload = { ...categoryForm, description: categoryForm.description || null, tag_color: categoryForm.tag_color || null, tenant_id: tenantId };
-      if (editingCategory) {
-        await updateCategory.mutateAsync({ id: editingCategory.id, ...payload });
-      } else {
-        await createCategory.mutateAsync(payload);
-      }
-      toast.success("Saved");
-      setShowCategoryForm(false);
-    } catch { toast.error("Failed"); }
-  };
-
-  // Schedule handlers
-  const openNewSchedule = () => {
-    setEditingSchedule(null);
-    setScheduleForm({ staff_id: staff?.[0]?.id || "", day_of_week: 1, start_time: "09:00", end_time: "17:00", is_available: true });
-    setShowScheduleForm(true);
-  };
-  const openEditSchedule = (s: StaffSchedule) => {
-    setEditingSchedule(s);
-    setScheduleForm({ staff_id: s.staff_id, day_of_week: s.day_of_week, start_time: s.start_time.slice(0, 5), end_time: s.end_time.slice(0, 5), is_available: s.is_available });
-    setShowScheduleForm(true);
-  };
-  const handleSaveSchedule = async () => {
-    if (!scheduleForm.staff_id) { toast.error("Staff required"); return; }
-    try {
-      const payload = { ...scheduleForm, tenant_id: tenantId };
-      if (editingSchedule) {
-        await updateSchedule.mutateAsync({ id: editingSchedule.id, ...payload });
-      } else {
-        await createSchedule.mutateAsync(payload);
-      }
-      toast.success("Saved");
-      setShowScheduleForm(false);
-    } catch { toast.error("Failed"); }
-  };
-
-  const handleBookingStatus = async (id: string, status: string) => {
-    try { await updateBooking.mutateAsync({ id, status }); toast.success(`Booking ${status}`); } catch { toast.error("Failed"); }
-  };
 
   // Analytics
   const [analyticsPeriod, setAnalyticsPeriod] = useState<"day" | "week" | "month">("month");
@@ -307,7 +162,198 @@ const Admin = () => {
   const { data: posStockItems } = useStockItems(tenantId, { activeOnly: true });
   const [posCart, setPosCart] = useState<PosCartItem[]>([]);
   const [posClientId, setPosClientId] = useState<string>("");
+  const [showRecentSalesSheet, setShowRecentSalesSheet] = useState(false);
+  const [posProductSearch, setPosProductSearch] = useState("");
   const [posPaymentMethod, setPosPaymentMethod] = useState<string>("cash");
+
+  // Pagination (6 per page)
+  const servicesPag = usePagination(services, 6);
+  const categoriesPag = usePagination(categories, 6);
+  const bookingsPag = usePagination(bookings, 6);
+  const clientsPag = usePagination(clients, 6);
+  const paymentsPag = usePagination(payments, 6);
+  const stockItemsPag = usePagination(stockItems, 6);
+  const locationsPag = usePagination(locations, 6);
+  const staffPag = usePagination(staff, 6);
+  const schedulesPag = usePagination(schedules, 6);
+  const posStockFiltered = useMemo(() => {
+    if (!posStockItems) return [];
+    if (!posProductSearch.trim()) return posStockItems;
+    const q = posProductSearch.toLowerCase().trim();
+    return posStockItems.filter((i) =>
+      i.name.toLowerCase().includes(q) ||
+      (i.sku && i.sku.toLowerCase().includes(q))
+    );
+  }, [posStockItems, posProductSearch]);
+  const posStockPag = usePagination(posStockFiltered, 20);
+  const posSalesPag = usePagination(posSales, 6);
+
+  const { data: isPlatformAdmin } = useIsPlatformAdmin();
+
+  if (loading) return <div className="flex min-h-screen items-center justify-center bg-background font-body text-sm text-muted-foreground">Loading...</div>;
+  if (!user) return <Navigate to="/login" replace />;
+  // Platform admins can access admin without completing tenant onboarding; tenant owners must complete onboarding (only redirect when we know user is not a platform admin)
+  if (isPlatformAdmin === false && tenant?.onboarding_status && tenant.onboarding_status !== "completed" && tenantId) {
+    return <Navigate to={`/onboarding?tenant_id=${tenantId}`} replace />;
+  }
+
+  const tenantName = tenant?.name || "Iska Service OS";
+
+  // Image upload handler
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, field: string) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const url = await uploadServiceImage(file);
+      setServiceForm((f) => ({ ...f, [field]: url }));
+      showSuccess("Image uploaded");
+    } catch {
+      showError("Upload failed");
+    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  // Service handlers
+  const openNewService = () => {
+    setEditingService(null);
+    const defaultCat = categories?.[0]?.slug || "";
+    setServiceForm({ name: "", description: "", duration_minutes: 30, price: 0, category: defaultCat, is_active: true, sort_order: 0, image_url: "", desktop_image_url: "", mobile_image_url: "" });
+    setShowServiceForm(true);
+  };
+  const openEditService = (s: Service) => {
+    setEditingService(s);
+    setServiceForm({
+      name: s.name, description: s.description || "", duration_minutes: s.duration_minutes,
+      price: Number(s.price), category: s.category, is_active: s.is_active, sort_order: s.sort_order,
+      image_url: s.image_url || "", desktop_image_url: s.desktop_image_url || "", mobile_image_url: s.mobile_image_url || "",
+    });
+    setShowServiceForm(true);
+  };
+  const handleSaveService = async () => {
+    if (!serviceForm.name) { showError("Name required"); return; }
+    try {
+      const payload = { ...serviceForm, image_url: serviceForm.image_url || null, desktop_image_url: serviceForm.desktop_image_url || null, mobile_image_url: serviceForm.mobile_image_url || null, tenant_id: tenantId, metadata: null, category_id: null };
+      if (editingService) {
+        await updateService.mutateAsync({ id: editingService.id, ...payload });
+        showSuccess("Updated");
+      } else {
+        await createService.mutateAsync(payload);
+        showSuccess("Created");
+      }
+      setShowServiceForm(false);
+    } catch { showError("Failed"); }
+  };
+
+  // Location handlers
+  const openNewLocation = () => {
+    setEditingLocation(null);
+    setLocationForm({ name: "", address: "", city: "", phone: "", email: "", is_active: true, sort_order: 0, image_url: "" });
+    setShowLocationForm(true);
+  };
+  const openEditLocation = (l: Location) => {
+    setEditingLocation(l);
+    setLocationForm({ name: l.name, address: l.address || "", city: l.city || "", phone: l.phone || "", email: l.email || "", is_active: l.is_active, sort_order: l.sort_order, image_url: l.image_url || "" });
+    setShowLocationForm(true);
+  };
+  const handleSaveLocation = async () => {
+    if (!locationForm.name) { showError("Name required"); return; }
+    try {
+      const payload = { ...locationForm, address: locationForm.address || null, city: locationForm.city || null, phone: locationForm.phone || null, email: locationForm.email || null, image_url: locationForm.image_url || null, tenant_id: tenantId, metadata: null };
+      if (editingLocation) {
+        await updateLocation.mutateAsync({ id: editingLocation.id, ...payload });
+      } else {
+        await createLocation.mutateAsync(payload);
+      }
+      showSuccess("Saved");
+      setShowLocationForm(false);
+    } catch { showError("Failed"); }
+  };
+
+  // Staff handlers
+  const openNewStaff = () => {
+    setEditingStaffMember(null);
+    const defaultCat = categories?.[0]?.slug || "";
+    setStaffForm({ name: "", title: "", category: defaultCat, bio: "", specialties: "", is_active: true, sort_order: 0, image_url: "", location_id: "" });
+    setShowStaffForm(true);
+  };
+  const openEditStaff = (s: Staff) => {
+    setEditingStaffMember(s);
+    setStaffForm({ name: s.name, title: s.title, category: s.category, bio: s.bio || "", specialties: s.specialties?.join(", ") || "", is_active: s.is_active, sort_order: s.sort_order, image_url: s.image_url || "", location_id: s.location_id || "" });
+    setShowStaffForm(true);
+  };
+  const handleSaveStaff = async () => {
+    if (!staffForm.name) { showError("Name required"); return; }
+    try {
+      const payload = {
+        name: staffForm.name, title: staffForm.title, category: staffForm.category,
+        bio: staffForm.bio || null, specialties: staffForm.specialties ? staffForm.specialties.split(",").map(s => s.trim()).filter(Boolean) : null,
+        is_active: staffForm.is_active, sort_order: staffForm.sort_order,
+        image_url: staffForm.image_url || null, location_id: staffForm.location_id || null, user_id: null,
+        tenant_id: tenantId, metadata: null,
+      };
+      if (editingStaffMember) {
+        await updateStaffMut.mutateAsync({ id: editingStaffMember.id, ...payload });
+      } else {
+        await createStaff.mutateAsync(payload);
+      }
+      showSuccess("Saved");
+      setShowStaffForm(false);
+    } catch { showError("Failed"); }
+  };
+
+  // Category handlers
+  const openNewCategory = () => {
+    setEditingCategory(null);
+    setCategoryForm({ name: "", slug: "", description: "", tag_color: "#3b82f6", is_active: true, sort_order: 0 });
+    setShowCategoryForm(true);
+  };
+  const openEditCategory = (c: ServiceCategory) => {
+    setEditingCategory(c);
+    setCategoryForm({ name: c.name, slug: c.slug, description: c.description || "", tag_color: c.tag_color || "#3b82f6", is_active: c.is_active, sort_order: c.sort_order });
+    setShowCategoryForm(true);
+  };
+  const handleSaveCategory = async () => {
+    if (!categoryForm.name || !categoryForm.slug) { showError("Name and slug required"); return; }
+    try {
+      const payload = { ...categoryForm, description: categoryForm.description || null, tag_color: categoryForm.tag_color || null, tenant_id: tenantId };
+      if (editingCategory) {
+        await updateCategory.mutateAsync({ id: editingCategory.id, ...payload });
+      } else {
+        await createCategory.mutateAsync(payload);
+      }
+      showSuccess("Saved");
+      setShowCategoryForm(false);
+    } catch { showError("Failed"); }
+  };
+
+  // Schedule handlers
+  const openNewSchedule = () => {
+    setEditingSchedule(null);
+    setScheduleForm({ staff_id: staff?.[0]?.id || "", day_of_week: 1, start_time: "09:00", end_time: "17:00", is_available: true });
+    setShowScheduleForm(true);
+  };
+  const openEditSchedule = (s: StaffSchedule) => {
+    setEditingSchedule(s);
+    setScheduleForm({ staff_id: s.staff_id, day_of_week: s.day_of_week, start_time: s.start_time.slice(0, 5), end_time: s.end_time.slice(0, 5), is_available: s.is_available });
+    setShowScheduleForm(true);
+  };
+  const handleSaveSchedule = async () => {
+    if (!scheduleForm.staff_id) { showError("Staff required"); return; }
+    try {
+      const payload = { ...scheduleForm, tenant_id: tenantId };
+      if (editingSchedule) {
+        await updateSchedule.mutateAsync({ id: editingSchedule.id, ...payload });
+      } else {
+        await createSchedule.mutateAsync(payload);
+      }
+      showSuccess("Saved");
+      setShowScheduleForm(false);
+    } catch { showError("Failed"); }
+  };
+
+  const handleBookingStatus = async (id: string, status: string) => {
+    try { await updateBooking.mutateAsync({ id, status }); showSuccess(`Booking ${status}`); } catch { showError("Failed"); }
+  };
 
   const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
     { key: "analytics", label: "Analytics", icon: <BarChart3 className="h-3.5 w-3.5" /> },
@@ -328,45 +374,44 @@ const Admin = () => {
 
   const getCategoryColor = (slug: string) => categories?.find(c => c.slug === slug)?.tag_color;
 
-  return (
-    <div className="min-h-screen bg-background font-body">
-      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-card px-4 py-3 sm:px-6">
-        <div className="flex items-center gap-3">
-          <a href="/" className="flex items-center gap-2">
-            {tenant?.logo_url ? (
-              <img src={tenant.logo_url} alt={tenantName} className="h-7 sm:h-8" />
-            ) : (
-              <img src="/iska systems logos.png" alt={tenantName} className="h-7 sm:h-8" />
-            )}
-          </a>
-          <span className="hidden rounded bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary sm:inline">Admin</span>
-          <TenantSwitcher />
-        </div>
-        <div className="hidden items-center gap-4 sm:flex">
-          {tabs.map((t) => (
-            <button key={t.key} onClick={() => setTab(t.key)} className={`flex items-center gap-1.5 text-xs font-medium ${tab === t.key ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}>
-              {t.icon}{t.label}
-            </button>
-          ))}
-          <button onClick={() => signOut()} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-destructive"><LogOut className="h-3.5 w-3.5" />Logout</button>
-        </div>
-        <button onClick={() => setMobileMenu(!mobileMenu)} className="sm:hidden text-foreground">{mobileMenu ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}</button>
-      </header>
-
-      {mobileMenu && (
-        <div className="border-b border-border bg-card px-4 py-3 sm:hidden animate-fade-in">
-          <div className="flex flex-col gap-3">
-            {tabs.map((t) => (
-              <button key={t.key} onClick={() => { setTab(t.key); setMobileMenu(false); }} className={`flex items-center gap-2 text-xs font-medium ${tab === t.key ? "text-primary" : "text-muted-foreground"}`}>
-                {t.icon}{t.label}
-              </button>
-            ))}
-            <button onClick={() => signOut()} className="flex items-center gap-2 text-xs text-muted-foreground hover:text-destructive"><LogOut className="h-3.5 w-3.5" />Logout</button>
-          </div>
-        </div>
+  const brand = (
+    <a href="/" className="flex shrink-0 items-center overflow-hidden rounded-md" aria-label="Home">
+      {tenant?.logo_url ? (
+        <img src={tenant.logo_url} alt={tenantName} className="h-28 w-28 object-contain sm:h-32 sm:w-32" />
+      ) : (
+        <img src="/iska systems logos.png" alt={tenantName} className="h-28 w-28 object-contain sm:h-32 sm:w-32" />
       )}
+    </a>
+  );
 
-      <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
+  const headerRight = (
+    <>
+      <TenantSwitcher />
+      <span className="rounded bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">Admin</span>
+    </>
+  );
+
+  return (
+    <DashboardLayout
+      brand={brand}
+      headerRight={headerRight}
+      navItems={tabs.map((t) => ({ key: t.key, label: t.label, icon: t.icon }))}
+      activeKey={tab}
+      onNavSelect={(key) => setTab(key as Tab)}
+      footer={
+        <button
+          type="button"
+          onClick={() => signOut()}
+          className="flex w-full items-center justify-between gap-2 rounded-t-lg rounded-b-none bg-black px-4 py-3 text-sm font-medium text-white hover:bg-black/90 group-data-[collapsible=icon]:!px-3 group-data-[collapsible=icon]:!py-2"
+        >
+          <span className="group-data-[collapsible=icon]:hidden">Logout</span>
+          <ArrowUpRight className="h-4 w-4 shrink-0" />
+        </button>
+      }
+      className="min-h-0"
+    >
+      <TrialBanner />
+      <main className="mx-auto w-full max-w-5xl flex-1 overflow-auto px-4 py-6 sm:px-6 sm:py-8">
 
         {/* ========= ANALYTICS ========= */}
         {tab === "analytics" && (
@@ -493,7 +538,7 @@ const Admin = () => {
               </div>
             ) : (
               <div className="space-y-3">
-                {clients.map((c) => (
+                {clientsPag.paginatedItems.map((c) => (
                   <div key={c.id} className="group rounded-xl border border-border bg-card p-4 hover:shadow-md transition-shadow">
                     <div className="flex items-center justify-between">
                       <div className="flex-1 min-w-0">
@@ -527,8 +572,20 @@ const Admin = () => {
                         </button>
                         <button
                           onClick={() => {
-                            if (confirm("Delete this client?"))
-                              deleteClient.mutateAsync({ id: c.id, tenantId: c.tenant_id }).then(() => toast.success("Deleted")).catch(() => toast.error("Failed"));
+                            setConfirmState({
+                              open: true,
+                              title: "Delete client",
+                              description: "Delete this client?",
+                              onConfirm: async () => {
+                                try {
+                                  await deleteClient.mutateAsync({ id: c.id, tenantId: c.tenant_id });
+                                  showSuccess("Deleted", "Client deleted.");
+                                } catch {
+                                  showError("Failed", "Could not delete client.");
+                                  throw new Error();
+                                }
+                              },
+                            });
                           }}
                           className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                         >
@@ -568,7 +625,7 @@ const Admin = () => {
               </div>
             ) : (
               <div className="space-y-3">
-                {stockItems.map((item) => {
+                {stockItemsPag.paginatedItems.map((item) => {
                   const isLow = item.min_stock > 0 && item.quantity <= item.min_stock;
                   return (
                     <div key={item.id} className="group rounded-xl border border-border bg-card p-4 hover:shadow-md transition-shadow">
@@ -617,7 +674,20 @@ const Admin = () => {
                           </button>
                           <button
                             onClick={() => {
-                              if (confirm("Delete this stock item?")) deleteStockItem.mutateAsync({ id: item.id, tenantId: item.tenant_id }).then(() => toast.success("Deleted")).catch(() => toast.error("Failed"));
+                              setConfirmState({
+                                open: true,
+                                title: "Delete stock item",
+                                description: "Delete this stock item?",
+                                onConfirm: async () => {
+                                  try {
+                                    await deleteStockItem.mutateAsync({ id: item.id, tenantId: item.tenant_id });
+                                    showSuccess("Deleted", "Stock item deleted.");
+                                  } catch {
+                                    showError("Failed", "Could not delete stock item.");
+                                    throw new Error();
+                                  }
+                                },
+                              });
                             }}
                             className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                           >
@@ -628,6 +698,7 @@ const Admin = () => {
                     </div>
                   );
                 })}
+                <RecordsPagination page={stockItemsPag.page} totalPages={stockItemsPag.totalPages} onPageChange={stockItemsPag.setPage} />
               </div>
             )}
           </div>
@@ -635,66 +706,181 @@ const Admin = () => {
 
         {/* ========= POS ========= */}
         {tab === "pos" && (
-          <div className="flex flex-col gap-4 lg:flex-row">
-            <div className="flex-1">
-              <h2 className="mb-4 font-display text-lg font-bold text-foreground sm:text-xl">Point of Sale</h2>
-              {posStats && (
-                <div className="mb-4 grid grid-cols-2 gap-3">
-                  <div className="rounded-xl border border-border bg-card p-3">
-                    <p className="text-[10px] font-medium text-muted-foreground">Today&apos;s Sales</p>
-                    <p className="mt-1 text-lg font-bold text-card-foreground">{posStats.count}</p>
+          <div className="flex flex-col gap-6">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <h2 className="font-display text-lg font-bold text-foreground sm:text-xl">Point of Sale</h2>
+              <Sheet open={showRecentSalesSheet} onOpenChange={setShowRecentSalesSheet}>
+                <SheetTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-medium text-foreground shadow-sm transition-all hover:bg-secondary hover:shadow-md"
+                  >
+                    Recent Sales
+                    {posSales && posSales.length > 0 && (
+                      <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold text-primary">{posSales.length}</span>
+                    )}
+                  </button>
+                </SheetTrigger>
+                <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto">
+                  <SheetHeader>
+                    <SheetTitle>Recent Sales</SheetTitle>
+                  </SheetHeader>
+                  <div className="mt-6 space-y-3">
+                    {posSales && posSales.length > 0 ? (
+                      posSalesPag.paginatedItems.map((sale: any) => (
+                        <div key={sale.id} className="rounded-xl border border-border bg-card p-4 shadow-sm">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                                <DollarSign className="h-5 w-5" />
+                              </div>
+                              <div>
+                                <p className="text-sm font-bold text-card-foreground">${Number(sale.total).toFixed(2)}</p>
+                                <p className="text-[10px] text-muted-foreground">
+                                  {sale.clients ? `${sale.clients.first_name || ""} ${sale.clients.last_name || ""}`.trim() || sale.clients.email : "Walk-in"} · {new Date(sale.created_at).toLocaleString()}
+                                </p>
+                              </div>
+                            </div>
+                            <span className="rounded-full bg-primary/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-primary">{sale.payment_method}</span>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-border bg-muted/20 py-12 text-center">
+                        <Receipt className="h-12 w-12 text-muted-foreground/40 mb-3" />
+                        <p className="text-sm font-medium text-muted-foreground">No recent sales</p>
+                      </div>
+                    )}
+                    {posSales && posSales.length > 0 && (
+                      <RecordsPagination page={posSalesPag.page} totalPages={posSalesPag.totalPages} onPageChange={posSalesPag.setPage} />
+                    )}
                   </div>
-                  <div className="rounded-xl border border-border bg-card p-3">
-                    <p className="text-[10px] font-medium text-muted-foreground">Today&apos;s Revenue</p>
-                    <p className="mt-1 text-lg font-bold text-card-foreground">${posStats.total.toFixed(0)}</p>
-                  </div>
-                </div>
-              )}
-              <div className="rounded-xl border border-border bg-card p-4">
-                <h3 className="mb-3 text-sm font-semibold text-card-foreground">Products</h3>
-                {!posStockItems?.length ? (
-                  <p className="text-sm text-muted-foreground">No active stock items. Add items in Inventory first.</p>
-                ) : (
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                    {posStockItems.map((item) => (
-                      <button
-                        key={item.id}
-                        onClick={() => {
-                          const existing = posCart.find((c) => c.stock_item_id === item.id);
-                          if (existing) {
-                            setPosCart((cart) =>
-                              cart.map((c) =>
-                                c.stock_item_id === item.id
-                                  ? { ...c, quantity: c.quantity + 1, total: (c.quantity + 1) * c.unit_price }
-                                  : c
-                              )
-                            );
-                          } else {
-                            const price = Number(item.sell_price);
-                            setPosCart((cart) => [...cart, { stock_item_id: item.id, item_name: item.name, quantity: 1, unit_price: price, total: price }]);
-                          }
-                        }}
-                        className="flex flex-col items-center rounded-lg border border-border bg-background p-3 text-left hover:bg-secondary/50 transition-colors"
-                      >
-                        <span className="text-xs font-medium text-foreground line-clamp-1">{item.name}</span>
-                        <span className="mt-1 text-xs font-bold text-primary">${Number(item.sell_price).toFixed(0)}</span>
-                        <span className="text-[10px] text-muted-foreground">Qty: {Number(item.quantity)}</span>
-                      </button>
-                    ))}
+                </SheetContent>
+              </Sheet>
+            </div>
+
+            <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[1fr_20rem]">
+              <div className="flex flex-col gap-4">
+                {posStats && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="group rounded-xl border border-emerald-200/60 bg-gradient-to-br from-emerald-50 to-emerald-100/80 p-4 shadow-sm transition-all hover:shadow-md dark:border-emerald-900/40 dark:from-emerald-950/50 dark:to-emerald-900/30">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-700 dark:text-emerald-400">
+                          <Receipt className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-medium uppercase tracking-wider text-emerald-700/80 dark:text-emerald-400/80">Today&apos;s Sales</p>
+                          <p className="mt-0.5 text-xl font-bold text-emerald-900 dark:text-emerald-100">{posStats.count}</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="group rounded-xl border border-amber-200/60 bg-gradient-to-br from-amber-50 to-amber-100/80 p-4 shadow-sm transition-all hover:shadow-md dark:border-amber-900/40 dark:from-amber-950/50 dark:to-amber-900/30">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-500/20 text-amber-700 dark:text-amber-400">
+                          <DollarSign className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-medium uppercase tracking-wider text-amber-700/80 dark:text-amber-400/80">Today&apos;s Revenue</p>
+                          <p className="mt-0.5 text-xl font-bold text-amber-900 dark:text-amber-100">${posStats.total.toFixed(0)}</p>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
+                <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+                  <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <h3 className="flex items-center gap-2 text-sm font-semibold text-card-foreground">
+                      <Package className="h-4 w-4 text-primary" /> Products
+                    </h3>
+                    <div className="relative">
+                      <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                      <input
+                        type="search"
+                        placeholder="Search products..."
+                        value={posProductSearch}
+                        onChange={(e) => setPosProductSearch(e.target.value)}
+                        className="h-8 w-full rounded-lg border border-border bg-background pl-8 pr-3 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:w-48"
+                      />
+                    </div>
+                  </div>
+                  {!posStockItems?.length ? (
+                    <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-border bg-muted/30 py-10 text-center">
+                      <Package className="h-10 w-10 text-muted-foreground/50 mb-2" />
+                      <p className="text-sm font-medium text-muted-foreground">No active stock items</p>
+                      <p className="text-xs text-muted-foreground">Add items in Inventory first.</p>
+                    </div>
+                  ) : posStockFiltered.length === 0 ? (
+                    <p className="py-6 text-center text-sm text-muted-foreground">No products match your search.</p>
+                  ) : (
+                    <>
+                      <div className="overflow-x-auto rounded-lg border border-border">
+                        <table className="w-full text-left text-sm">
+                          <thead>
+                            <tr className="border-b border-border bg-muted/50">
+                              <th className="px-3 py-2 font-medium text-muted-foreground">Product</th>
+                              <th className="px-3 py-2 font-medium text-muted-foreground text-right">Price</th>
+                              <th className="px-3 py-2 font-medium text-muted-foreground text-right">Qty</th>
+                              <th className="w-10 px-2 py-2" />
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {posStockPag.paginatedItems.map((item) => (
+                              <tr
+                                key={item.id}
+                                className="border-b border-border last:border-b-0 transition-colors hover:bg-muted/30"
+                              >
+                                <td className="px-3 py-2 font-medium text-foreground">{item.name}</td>
+                                <td className="px-3 py-2 text-right font-semibold text-primary">${Number(item.sell_price).toFixed(2)}</td>
+                                <td className="px-3 py-2 text-right text-muted-foreground">{Number(item.quantity)}</td>
+                                <td className="px-2 py-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const existing = posCart.find((c) => c.stock_item_id === item.id);
+                                      const price = Number(item.sell_price);
+                                      if (existing) {
+                                        setPosCart((cart) =>
+                                          cart.map((c) =>
+                                            c.stock_item_id === item.id
+                                              ? { ...c, quantity: c.quantity + 1, total: (c.quantity + 1) * c.unit_price }
+                                              : c
+                                          )
+                                        );
+                                      } else {
+                                        setPosCart((cart) => [...cart, { stock_item_id: item.id, item_name: item.name, quantity: 1, unit_price: price, total: price }]);
+                                      }
+                                    }}
+                                    className="rounded-md bg-primary px-2 py-1 text-[10px] font-semibold text-primary-foreground hover:bg-primary/90"
+                                  >
+                                    Add
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <RecordsPagination page={posStockPag.page} totalPages={posStockPag.totalPages} onPageChange={posStockPag.setPage} />
+                    </>
+                  )}
+                </div>
               </div>
-            </div>
-            <div className="w-full lg:w-80 shrink-0">
-              <div className="sticky top-24 rounded-xl border border-border bg-card p-4">
-                <h3 className="mb-3 text-sm font-semibold text-card-foreground">Cart</h3>
+              <div className="w-full lg:w-auto">
+              <div className="sticky top-24 rounded-xl border border-border bg-card p-5 shadow-md">
+                <h3 className="mb-4 flex items-center gap-2 text-sm font-semibold text-card-foreground">
+                  <ShoppingCart className="h-4 w-4 text-primary" /> Cart
+                </h3>
                 {posCart.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Cart is empty</p>
+                  <div className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-border bg-muted/20 py-10">
+                    <ShoppingCart className="h-14 w-14 text-muted-foreground/40 mb-3" />
+                    <p className="text-sm font-medium text-muted-foreground">Cart is empty</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Tap products to add</p>
+                  </div>
                 ) : (
                   <>
                     <div className="max-h-48 space-y-2 overflow-y-auto">
                       {posCart.map((line, idx) => (
-                        <div key={idx} className="flex items-center justify-between rounded-lg border border-border bg-background p-2">
+                        <div key={idx} className="flex items-center justify-between rounded-lg border border-border bg-gradient-to-r from-background to-muted/10 p-3 shadow-sm">
                           <div className="min-w-0 flex-1">
                             <p className="truncate text-xs font-medium text-foreground">{line.item_name}</p>
                             <p className="text-[10px] text-muted-foreground">${line.unit_price.toFixed(2)} × {line.quantity}</p>
@@ -714,9 +900,9 @@ const Admin = () => {
                         </div>
                       ))}
                     </div>
-                    <div className="mt-4 border-t border-border pt-3">
+                    <div className="mt-4 rounded-lg border border-primary/20 bg-primary/5 p-3">
                       <p className="flex justify-between text-sm font-bold text-card-foreground">
-                        Total <span>${posCart.reduce((s, i) => s + i.total, 0).toFixed(2)}</span>
+                        Total <span className="text-lg text-primary">${posCart.reduce((s, i) => s + i.total, 0).toFixed(2)}</span>
                       </p>
                       <div className="mt-2">
                         <label className={labelCls}>Client (optional)</label>
@@ -746,13 +932,13 @@ const Admin = () => {
                             });
                             setPosCart([]);
                             setPosClientId("");
-                            toast.success("Sale completed!");
+                            showSuccess("Sale completed", "Sale completed successfully.");
                           } catch (err: any) {
-                            toast.error(err.message || "Sale failed");
+                            showError("Sale failed", err.message || "Could not complete sale");
                           }
                         }}
                         disabled={completePosSale.isPending || posCart.length === 0}
-                        className="mt-3 w-full rounded-full bg-primary py-2.5 text-xs font-semibold uppercase tracking-wider text-primary-foreground hover:scale-[1.02] transition-transform disabled:opacity-50 sm:text-sm"
+                        className="mt-3 w-full rounded-xl bg-primary py-3 text-xs font-bold uppercase tracking-wider text-primary-foreground shadow-md transition-all hover:scale-[1.02] hover:shadow-lg disabled:opacity-50 sm:text-sm"
                       >
                         {completePosSale.isPending ? "Processing..." : "Complete Sale"}
                       </button>
@@ -761,27 +947,6 @@ const Admin = () => {
                 )}
               </div>
             </div>
-          </div>
-        )}
-
-        {/* ========= RECENT POS SALES ========= */}
-        {tab === "pos" && posSales && posSales.length > 0 && (
-          <div className="mt-6">
-            <h3 className="mb-3 font-display text-sm font-semibold text-foreground">Recent Sales</h3>
-            <div className="space-y-2">
-              {posSales.slice(0, 10).map((sale: any) => (
-                <div key={sale.id} className="rounded-xl border border-border bg-card p-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-semibold text-card-foreground">${Number(sale.total).toFixed(2)}</p>
-                      <p className="text-[10px] text-muted-foreground">
-                        {sale.clients ? `${sale.clients.first_name || ""} ${sale.clients.last_name || ""}`.trim() || sale.clients.email : "Walk-in"} · {new Date(sale.created_at).toLocaleString()}
-                      </p>
-                    </div>
-                    <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">{sale.payment_method}</span>
-                  </div>
-                </div>
-              ))}
             </div>
           </div>
         )}
@@ -827,7 +992,7 @@ const Admin = () => {
               </div>
             ) : (
               <div className="space-y-3">
-                {payments.map((p: any) => (
+                {paymentsPag.paginatedItems.map((p: any) => (
                   <div key={p.id} className="group rounded-xl border border-border bg-card p-4 hover:shadow-md transition-shadow">
                     <div className="flex items-center justify-between">
                       <div className="flex-1 min-w-0">
@@ -880,7 +1045,7 @@ const Admin = () => {
             </div>
             {loadingServices ? <p className="text-sm text-muted-foreground">Loading...</p> : (
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {services?.map((s) => (
+                {servicesPag.paginatedItems.map((s) => (
                   <div key={s.id} className="group rounded-xl border border-border bg-card p-4 hover:shadow-md transition-shadow">
                     {s.image_url && <div className="mb-2 h-24 overflow-hidden rounded-lg"><img src={s.image_url} alt={s.name} className="h-full w-full object-cover" /></div>}
                     <div className="flex items-start justify-between">
@@ -890,7 +1055,7 @@ const Admin = () => {
                       </div>
                       <div className="ml-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button onClick={() => openEditService(s)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"><Edit2 className="h-3.5 w-3.5" /></button>
-                        <button onClick={() => { if (confirm("Delete?")) deleteService.mutateAsync(s.id).then(() => toast.success("Deleted")).catch(() => toast.error("Failed")); }} className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => setConfirmState({ open: true, title: "Delete service", description: "Delete this service?", onConfirm: async () => { try { await deleteService.mutateAsync(s.id); showSuccess("Deleted", "Service deleted."); } catch { showError("Failed", "Could not delete."); throw new Error(); } } })} className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
                       </div>
                     </div>
                     <div className="mt-3 flex items-center gap-2 text-[11px]">
@@ -904,6 +1069,7 @@ const Admin = () => {
                     </div>
                   </div>
                 ))}
+                <RecordsPagination page={servicesPag.page} totalPages={servicesPag.totalPages} onPageChange={servicesPag.setPage} />
               </div>
             )}
           </div>
@@ -923,7 +1089,7 @@ const Admin = () => {
               </div>
             ) : (
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {categories.map((c) => (
+                {categoriesPag.paginatedItems.map((c) => (
                   <div key={c.id} className="group rounded-xl border border-border bg-card p-4 hover:shadow-md transition-shadow">
                     <div className="flex items-start justify-between">
                       <div className="flex items-center gap-2">
@@ -935,7 +1101,7 @@ const Admin = () => {
                       </div>
                       <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button onClick={() => openEditCategory(c)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"><Edit2 className="h-3.5 w-3.5" /></button>
-                        <button onClick={() => { if (confirm("Delete?")) deleteCategory.mutateAsync(c.id).then(() => toast.success("Deleted")).catch(() => toast.error("Failed")); }} className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => setConfirmState({ open: true, title: "Delete category", description: "Delete this category?", onConfirm: async () => { try { await deleteCategory.mutateAsync(c.id); showSuccess("Deleted", "Category deleted."); } catch { showError("Failed", "Could not delete."); throw new Error(); } } })} className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
                       </div>
                     </div>
                     {c.description && <p className="mt-2 text-[11px] text-muted-foreground">{c.description}</p>}
@@ -956,7 +1122,7 @@ const Admin = () => {
             <h2 className="mb-4 font-display text-lg font-bold text-foreground sm:mb-6 sm:text-xl">Bookings</h2>
             {loadingBookings ? <p className="text-sm text-muted-foreground">Loading...</p> : !bookings?.length ? <p className="text-sm text-muted-foreground">No bookings yet.</p> : (
               <div className="space-y-3">
-                {bookings.map((b) => {
+                {bookingsPag.paginatedItems.map((b) => {
                   const svc = services?.find((s) => s.id === b.service_id);
                   const stf = staff?.find((s) => s.id === b.staff_id);
                   const loc = locations?.find((l) => l.id === b.location_id);
@@ -982,7 +1148,7 @@ const Admin = () => {
                             <div className="absolute right-0 top-full z-10 hidden min-w-[120px] rounded-lg border border-border bg-card p-1 shadow-lg group-hover/actions:block">
                               <button onClick={() => handleBookingStatus(b.id, "confirmed")} className="w-full rounded-md px-3 py-1.5 text-left text-[11px] hover:bg-secondary">Confirm</button>
                               <button onClick={() => handleBookingStatus(b.id, "cancelled")} className="w-full rounded-md px-3 py-1.5 text-left text-[11px] hover:bg-secondary">Cancel</button>
-                              <button onClick={() => { if (confirm("Delete?")) deleteBooking.mutateAsync(b.id).then(() => toast.success("Deleted")); }} className="w-full rounded-md px-3 py-1.5 text-left text-[11px] text-destructive hover:bg-destructive/10">Delete</button>
+                              <button onClick={() => setConfirmState({ open: true, title: "Delete booking", description: "Delete this booking?", onConfirm: async () => { try { await deleteBooking.mutateAsync(b.id); showSuccess("Deleted", "Booking deleted."); } catch { showError("Failed", "Could not delete."); throw new Error(); } } })} className="w-full rounded-md px-3 py-1.5 text-left text-[11px] text-destructive hover:bg-destructive/10">Delete</button>
                             </div>
                           </div>
                         </div>
@@ -990,6 +1156,7 @@ const Admin = () => {
                     </div>
                   );
                 })}
+                <RecordsPagination page={bookingsPag.page} totalPages={bookingsPag.totalPages} onPageChange={bookingsPag.setPage} />
               </div>
             )}
           </div>
@@ -1004,7 +1171,7 @@ const Admin = () => {
             </div>
             {loadingLocations ? <p className="text-sm text-muted-foreground">Loading...</p> : (
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {locations?.map((l) => (
+                {locationsPag.paginatedItems.map((l) => (
                   <div key={l.id} className="group rounded-xl border border-border bg-card p-4 hover:shadow-md transition-shadow">
                     <div className="flex items-start justify-between">
                       <div className="flex-1 min-w-0">
@@ -1014,7 +1181,7 @@ const Admin = () => {
                       </div>
                       <div className="ml-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button onClick={() => openEditLocation(l)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"><Edit2 className="h-3.5 w-3.5" /></button>
-                        <button onClick={() => { if (confirm("Delete?")) deleteLocationMut.mutateAsync(l.id).then(() => toast.success("Deleted")).catch(() => toast.error("Failed")); }} className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => setConfirmState({ open: true, title: "Delete location", description: "Delete this location?", onConfirm: async () => { try { await deleteLocationMut.mutateAsync(l.id); showSuccess("Deleted", "Location deleted."); } catch { showError("Failed", "Could not delete."); throw new Error(); } } })} className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
                       </div>
                     </div>
                     {!l.is_active && <span className="mt-2 inline-block rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">Inactive</span>}
@@ -1034,7 +1201,7 @@ const Admin = () => {
             </div>
             {loadingStaff ? <p className="text-sm text-muted-foreground">Loading...</p> : (
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {staff?.map((s) => (
+                {staffPag.paginatedItems.map((s) => (
                   <div key={s.id} className="group rounded-xl border border-border bg-card p-4 hover:shadow-md transition-shadow">
                     <div className="flex items-start gap-3">
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary overflow-hidden">
@@ -1050,12 +1217,13 @@ const Admin = () => {
                       </div>
                       <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button onClick={() => openEditStaff(s)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"><Edit2 className="h-3.5 w-3.5" /></button>
-                        <button onClick={() => { if (confirm("Delete?")) deleteStaffMut.mutateAsync(s.id).then(() => toast.success("Deleted")).catch(() => toast.error("Failed")); }} className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => setConfirmState({ open: true, title: "Delete staff", description: "Delete this staff member?", onConfirm: async () => { try { await deleteStaffMut.mutateAsync(s.id); showSuccess("Deleted", "Staff member deleted."); } catch { showError("Failed", "Could not delete."); throw new Error(); } } })} className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
                       </div>
                     </div>
                     {s.specialties && <div className="mt-2 flex flex-wrap gap-1">{s.specialties.map((sp) => <span key={sp} className="rounded bg-secondary px-1.5 py-0.5 text-[9px] text-muted-foreground">{sp}</span>)}</div>}
                   </div>
                 ))}
+                <RecordsPagination page={staffPag.page} totalPages={staffPag.totalPages} onPageChange={staffPag.setPage} />
               </div>
             )}
           </div>
@@ -1075,7 +1243,7 @@ const Admin = () => {
               </div>
             ) : (
               <div className="space-y-3">
-                {schedules.map((s) => {
+                {schedulesPag.paginatedItems.map((s) => {
                   const staffMember = staff?.find(st => st.id === s.staff_id);
                   return (
                     <div key={s.id} className="group rounded-xl border border-border bg-card p-4 hover:shadow-md transition-shadow">
@@ -1090,13 +1258,14 @@ const Admin = () => {
                           {!s.is_available && <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">Unavailable</span>}
                           <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                             <button onClick={() => openEditSchedule(s)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"><Edit2 className="h-3.5 w-3.5" /></button>
-                            <button onClick={() => { if (confirm("Delete?")) deleteSchedule.mutateAsync(s.id).then(() => toast.success("Deleted")).catch(() => toast.error("Failed")); }} className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
+                            <button onClick={() => setConfirmState({ open: true, title: "Delete schedule", description: "Delete this schedule?", onConfirm: async () => { try { await deleteSchedule.mutateAsync(s.id); showSuccess("Deleted", "Schedule deleted."); } catch { showError("Failed", "Could not delete."); throw new Error(); } } })} className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
                           </div>
                         </div>
                       </div>
                     </div>
                   );
                 })}
+                <RecordsPagination page={schedulesPag.page} totalPages={schedulesPag.totalPages} onPageChange={schedulesPag.setPage} />
               </div>
             )}
           </div>
@@ -1373,20 +1542,20 @@ const Admin = () => {
               <button
                 onClick={async () => {
                   if (!clientForm.email && !clientForm.phone) {
-                    toast.error("Email or phone required");
+                    showError("Email or phone required");
                     return;
                   }
                   try {
                     if (editingClient) {
                       await updateClient.mutateAsync({ id: editingClient.id, ...clientForm, tenant_id: editingClient.tenant_id });
-                      toast.success("Client updated");
+                      showSuccess("Client updated");
                     } else {
                       await createClient.mutateAsync({ ...clientForm, tenant_id: tenantId! });
-                      toast.success("Client created");
+                      showSuccess("Client created");
                     }
                     setShowClientForm(false);
                   } catch (err: any) {
-                    toast.error(err.message || "Failed to save client");
+                    showError(err.message || "Failed to save client");
                   }
                 }}
                 disabled={createClient.isPending || updateClient.isPending}
@@ -1436,18 +1605,18 @@ const Admin = () => {
               </div>
               <button
                 onClick={async () => {
-                  if (!stockForm.name) { toast.error("Name required"); return; }
-                  if (stockForm.sell_price < 0) { toast.error("Sell price must be >= 0"); return; }
+                  if (!stockForm.name) { showError("Name required"); return; }
+                  if (stockForm.sell_price < 0) { showError("Sell price must be >= 0"); return; }
                   try {
                     if (editingStock) {
                       await updateStockItem.mutateAsync({ id: editingStock.id, ...stockForm, quantity: editingStock.quantity });
-                      toast.success("Updated");
+                      showSuccess("Updated");
                     } else {
                       await createStockItem.mutateAsync({ ...stockForm, tenant_id: tenantId! });
-                      toast.success("Created");
+                      showSuccess("Created");
                     }
                     setShowStockForm(false);
-                  } catch { toast.error("Failed"); }
+                  } catch { showError("Failed"); }
                 }}
                 disabled={createStockItem.isPending || updateStockItem.isPending}
                 className="w-full rounded-full bg-primary py-2.5 text-xs font-semibold uppercase tracking-wider text-primary-foreground hover:scale-[1.02] transition-transform disabled:opacity-50 sm:text-sm"
@@ -1493,9 +1662,9 @@ const Admin = () => {
               <button
                 onClick={async () => {
                   const delta = adjustForm.type === "purchase" || adjustForm.type === "return" ? Math.abs(adjustForm.quantity_delta) : adjustForm.quantity_delta;
-                  if (delta === 0) { toast.error("Enter quantity"); return; }
+                  if (delta === 0) { showError("Enter quantity"); return; }
                   if ((adjustForm.type === "sale" || adjustForm.type === "adjustment") && delta < 0 && Math.abs(delta) > Number(adjustItem.quantity)) {
-                    toast.error("Insufficient stock"); return;
+                    showError("Insufficient stock"); return;
                   }
                   try {
                     const delta = adjustForm.type === "purchase" || adjustForm.type === "return"
@@ -1510,9 +1679,9 @@ const Admin = () => {
                       type: adjustForm.type === "sale" ? "sale" : adjustForm.type,
                       notes: adjustForm.notes || null,
                     });
-                    toast.success("Stock adjusted");
+                    showSuccess("Stock adjusted");
                     setShowAdjustForm(false);
-                  } catch (err: any) { toast.error(err.message || "Failed"); }
+                  } catch (err: any) { showError(err.message || "Failed"); }
                 }}
                 disabled={stockAdjustment.isPending}
                 className="w-full rounded-full bg-primary py-2.5 text-xs font-semibold uppercase tracking-wider text-primary-foreground hover:scale-[1.02] transition-transform disabled:opacity-50 sm:text-sm"
@@ -1578,13 +1747,13 @@ const Admin = () => {
               <button
                 onClick={async () => {
                   if (!paymentForm.amount || paymentForm.amount <= 0) {
-                    toast.error("Amount required");
+                    showError("Amount required");
                     return;
                   }
                   try {
                     if (editingPayment) {
                       await updatePayment.mutateAsync({ id: editingPayment.id, ...paymentForm });
-                      toast.success("Payment updated");
+                      showSuccess("Payment updated");
                     } else {
                       await createPayment.mutateAsync({
                         ...paymentForm,
@@ -1592,11 +1761,11 @@ const Admin = () => {
                         booking_id: paymentForm.booking_id || null,
                         client_id: paymentForm.client_id || null,
                       });
-                      toast.success("Payment created");
+                      showSuccess("Payment created");
                     }
                     setShowPaymentForm(false);
                   } catch (err: any) {
-                    toast.error(err.message || "Failed to save payment");
+                    showError(err.message || "Failed to save payment");
                   }
                 }}
                 disabled={createPayment.isPending || updatePayment.isPending}
@@ -1610,7 +1779,18 @@ const Admin = () => {
       )}
 
       <input ref={fileInputRef} type="file" className="hidden" />
-    </div>
+      {confirmState && (
+        <ConfirmDialog
+          open={confirmState.open}
+          onOpenChange={(open) => !open && setConfirmState(null)}
+          title={confirmState.title}
+          description={confirmState.description}
+          confirmLabel={confirmState.confirmLabel ?? "Delete"}
+          variant="destructive"
+          onConfirm={confirmState.onConfirm}
+        />
+      )}
+    </DashboardLayout>
   );
 };
 

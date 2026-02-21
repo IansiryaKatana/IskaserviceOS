@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { Navigate } from "react-router-dom";
-import { toast } from "sonner";
+import { useFeedback } from "@/hooks/use-feedback";
 
 const Login = () => {
   const { signIn, signUp, user, loading } = useAuth();
+  const { showSuccess, showError } = useFeedback();
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -19,13 +20,13 @@ const Login = () => {
     try {
       if (isLogin) {
         await signIn(email, password);
-        toast.success("Signed in successfully");
+        showSuccess("Signed in", "Signed in successfully.");
       } else {
         await signUp(email, password);
-        toast.success("Check your email to confirm your account");
+        showSuccess("Check your email", "Check your email to confirm your account.");
       }
     } catch (err: any) {
-      toast.error(err.message || "Authentication failed");
+      showError("Authentication failed", err.message || "Could not sign in.");
     } finally {
       setSubmitting(false);
     }

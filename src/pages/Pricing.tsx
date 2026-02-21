@@ -1,50 +1,55 @@
-import { Link } from "react-router-dom";
-import { Check, ArrowRight, Building2, X } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { Check, X, CreditCard } from "lucide-react";
 import { useState } from "react";
 import { useCreateTenantRequest } from "@/hooks/use-tenant-requests";
-import { toast } from "sonner";
+import { usePublicPaymentOptions } from "@/hooks/use-platform-payment-settings";
+import { useFeedback } from "@/hooks/use-feedback";
 import iskaOSLogo from "/iska systems logos.png";
+import { PLAN_FREE, PLAN_STARTER, PLAN_LIFETIME } from "@/lib/plans";
 
 const PLANS = [
   {
+    id: PLAN_FREE,
     name: "Free",
     price: "$0",
-    period: "forever",
-    description: "Perfect for trying out Iska Service OS",
+    period: "15-day trial",
+    description: "Full access for 15 days. Upgrade to Starter or Lifetime before trial ends.",
     features: [
       "1 location",
       "Up to 5 staff members",
       "Unlimited bookings",
       "Basic analytics",
-      "Email support",
       "White-label branding",
+      "Payment processing",
     ],
-    cta: "Get Started",
+    cta: "Start 15-Day Free Trial",
     popular: false,
   },
   {
+    id: PLAN_STARTER,
     name: "Starter",
-    price: "$29",
+    price: "$45",
     period: "per month",
-    description: "For small businesses getting started",
+    description: "For small businesses. All features included.",
     features: [
       "3 locations",
       "Up to 15 staff members",
       "Unlimited bookings",
       "Advanced analytics",
-      "Priority email support",
+      "Priority support",
       "Custom domain",
-      "Payment processing",
+      "Inventory & POS",
       "Client management",
     ],
-    cta: "Start Free Trial",
+    cta: "Subscribe $45/mo",
     popular: true,
   },
   {
-    name: "Pro",
-    price: "$99",
-    period: "per month",
-    description: "For growing businesses",
+    id: PLAN_LIFETIME,
+    name: "Lifetime",
+    price: "$500",
+    period: "one-time",
+    description: "Pay once, use forever. All features included.",
     features: [
       "Unlimited locations",
       "Unlimited staff",
@@ -52,28 +57,25 @@ const PLANS = [
       "Full analytics suite",
       "Priority support",
       "Custom domain + SSL",
-      "Stripe integration",
-      "Advanced client features",
-      "Review management",
+      "Inventory & POS",
+      "Client management",
       "API access",
     ],
-    cta: "Start Free Trial",
+    cta: "Buy Lifetime $500",
     popular: false,
   },
   {
+    id: "enterprise",
     name: "Enterprise",
     price: "Custom",
     period: "",
-    description: "For large organizations",
+    description: "For large organizations and custom deployments.",
     features: [
-      "Everything in Pro",
+      "Everything in Lifetime",
       "Dedicated account manager",
       "Custom integrations",
+      "On-premise option",
       "SLA guarantee",
-      "On-premise deployment option",
-      "Custom training",
-      "Multi-region support",
-      "Advanced security",
     ],
     cta: "Contact Sales",
     popular: false,
@@ -81,6 +83,8 @@ const PLANS = [
 ];
 
 const Pricing = () => {
+  const navigate = useNavigate();
+  const { showSuccess, showError } = useFeedback();
   const [showRequestDialog, setShowRequestDialog] = useState(false);
   const [showEnterpriseDialog, setShowEnterpriseDialog] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<string | null>(null);
@@ -104,11 +108,15 @@ const Pricing = () => {
     message: "",
   });
   const createRequest = useCreateTenantRequest();
+  const paymentOptions = usePublicPaymentOptions();
 
-  const handlePlanClick = (planName: string) => {
-    setSelectedPlan(planName);
-    if (planName === "Enterprise") {
+  const handlePlanClick = (planId: string) => {
+    setSelectedPlan(planId);
+    if (planId === "enterprise") {
       setShowEnterpriseDialog(true);
+    } else if (planId === PLAN_FREE) {
+      // Free trial: go to signup with redirect to onboarding
+      navigate("/signup?plan=free");
     } else {
       setShowRequestDialog(true);
     }
@@ -116,14 +124,14 @@ const Pricing = () => {
 
   const handleSubmitRequest = async () => {
     if (!requestForm.name || !requestForm.email) {
-      toast.error("Name and email are required");
+      showError("Required", "Name and email are required");
       return;
     }
     try {
       const message = selectedPlan
         ? `Interested in ${selectedPlan} plan.\n\n${requestForm.message || ""}`
         : requestForm.message || "";
-      
+
       await createRequest.mutateAsync({
         name: requestForm.name,
         email: requestForm.email,
@@ -132,23 +140,23 @@ const Pricing = () => {
         message: message || null,
         business_type: requestForm.business_type || null,
       });
-      toast.success("Request submitted! We'll contact you soon.");
+      showSuccess("Request submitted", "We'll contact you soon.");
       setShowRequestDialog(false);
       setRequestForm({ name: "", email: "", phone: "", company: "", business_type: "", message: "" });
       setSelectedPlan(null);
     } catch (err: any) {
-      toast.error(err.message || "Failed to submit request");
+      showError("Failed", err.message || "Failed to submit request");
     }
   };
 
   const handleSubmitEnterprise = async () => {
     if (!enterpriseForm.name || !enterpriseForm.email) {
-      toast.error("Name and email are required");
+      showError("Required", "Name and email are required");
       return;
     }
     try {
       const message = `Enterprise/Custom Solution Inquiry\n\nCompany Size: ${enterpriseForm.company_size || "Not specified"}\nTimeline: ${enterpriseForm.timeline || "Not specified"}\nRequirements: ${enterpriseForm.requirements || "Not specified"}\n\n${enterpriseForm.message || ""}`;
-      
+
       await createRequest.mutateAsync({
         name: enterpriseForm.name,
         email: enterpriseForm.email,
@@ -157,7 +165,7 @@ const Pricing = () => {
         message: message || null,
         business_type: enterpriseForm.business_type || null,
       });
-      toast.success("Request submitted! Our sales team will contact you soon.");
+      showSuccess("Request submitted", "Our sales team will contact you soon.");
       setShowEnterpriseDialog(false);
       setEnterpriseForm({
         name: "",
@@ -171,13 +179,30 @@ const Pricing = () => {
         message: "",
       });
     } catch (err: any) {
-      toast.error(err.message || "Failed to submit request");
+      showError("Failed", err.message || "Failed to submit request");
     }
+  };
+
+  const getStripeLink = (plan: string) => {
+    if (plan === PLAN_STARTER) return paymentOptions.stripePaymentLinkStarter;
+    if (plan === PLAN_LIFETIME) return paymentOptions.stripePaymentLinkLifetime;
+    return null;
+  };
+
+  const getPayPalUrl = (plan: string) => {
+    if (plan === PLAN_STARTER) return paymentOptions.paypalPaymentUrlStarter;
+    if (plan === PLAN_LIFETIME) return paymentOptions.paypalPaymentUrlLifetime;
+    return null;
+  };
+
+  const hasPaymentLinks = (plan: string) => {
+    const stripe = getStripeLink(plan);
+    const paypal = getPayPalUrl(plan);
+    return !!(stripe || paypal);
   };
 
   return (
     <div className="min-h-screen bg-background font-body">
-      {/* Header */}
       <header className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-card px-4 py-3 sm:px-6">
         <Link to="/" className="flex items-center gap-2">
           <img src={iskaOSLogo} alt="Iska Service OS" className="h-8 sm:h-10" />
@@ -203,7 +228,7 @@ const Pricing = () => {
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4 mb-12">
           {PLANS.map((plan) => (
             <div
-              key={plan.name}
+              key={plan.id}
               className={`relative rounded-2xl border p-6 sm:p-8 flex flex-col transition-colors hover:bg-secondary/50 ${
                 plan.popular
                   ? "border-primary bg-primary/5 shadow-lg scale-105"
@@ -232,7 +257,7 @@ const Pricing = () => {
                 ))}
               </ul>
               <button
-                onClick={() => handlePlanClick(plan.name)}
+                onClick={() => handlePlanClick(plan.id)}
                 className={`w-full rounded-full py-2.5 text-xs font-semibold uppercase tracking-wider transition-transform hover:scale-105 mt-auto ${
                   plan.popular
                     ? "bg-primary text-primary-foreground"
@@ -245,31 +270,15 @@ const Pricing = () => {
           ))}
         </div>
 
-        <div className="rounded-2xl border border-border p-8 text-center" style={{ backgroundColor: '#d16e17' }}>
-          <Building2 className="mx-auto h-12 w-12 text-white mb-4" />
-          <h2 className="font-display text-2xl font-bold text-white mb-2">
-            Need a Custom Solution?
-          </h2>
-          <p className="text-sm text-white/90 mb-6 max-w-xl mx-auto">
-            We offer custom pricing for enterprise deployments, white-label solutions, and on-premise installations.
-          </p>
-          <button
-            onClick={() => handlePlanClick("Enterprise")}
-            className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-semibold uppercase tracking-wider text-[#d16e17] transition-transform hover:scale-105"
-          >
-            Contact Sales
-            <ArrowRight className="h-4 w-4" />
-          </button>
-        </div>
       </main>
 
-      {/* Request Callback Dialog for Free/Starter/Pro */}
-      {showRequestDialog && (
+      {/* Payment / Request Dialog for Starter and Lifetime */}
+      {showRequestDialog && selectedPlan && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4 backdrop-blur-sm">
-          <div className="animate-slide-in-right w-full max-w-md rounded-2xl bg-card p-5 shadow-2xl sm:p-6">
+          <div className="animate-slide-in-right w-full max-w-md rounded-2xl bg-card p-5 shadow-2xl sm:p-6 max-h-[90vh] overflow-y-auto">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
-                {selectedPlan ? `Get Started with ${selectedPlan}` : "Request a Callback"}
+                Get Started with {selectedPlan === PLAN_STARTER ? "Starter" : "Lifetime"}
               </h3>
               <button
                 onClick={() => {
@@ -282,8 +291,44 @@ const Pricing = () => {
               </button>
             </div>
             <p className="mb-4 text-xs text-muted-foreground">
-              Tell us about your business and we'll get back to you within 24 hours.
+              Pay now with card or PayPal, or submit the form to request a callback.
             </p>
+            {(selectedPlan === PLAN_STARTER || selectedPlan === PLAN_LIFETIME) && !paymentOptions.provider && (
+              <p className="mb-4 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                Configure Stripe or PayPal in Platform → Payments to accept payments here.
+              </p>
+            )}
+            {(selectedPlan === PLAN_STARTER || selectedPlan === PLAN_LIFETIME) && (paymentOptions.provider === "stripe" || paymentOptions.provider === "both") && getStripeLink(selectedPlan) && (
+              <div className="mb-4 flex flex-wrap gap-2">
+                <a
+                  href={getStripeLink(selectedPlan)!}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-primary-foreground hover:scale-[1.02] transition-transform"
+                >
+                  <CreditCard className="h-4 w-4" /> Pay with Card (Stripe)
+                </a>
+              </div>
+            )}
+            {(selectedPlan === PLAN_STARTER || selectedPlan === PLAN_LIFETIME) && (paymentOptions.provider === "paypal" || paymentOptions.provider === "both") && (paymentOptions.paypalClientId || getPayPalUrl(selectedPlan)) && (
+              <div className="mb-4">
+                {getPayPalUrl(selectedPlan) ? (
+                  <a
+                    href={getPayPalUrl(selectedPlan)!}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-foreground hover:bg-secondary transition-colors"
+                  >
+                    Pay with PayPal
+                  </a>
+                ) : (
+                  <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+                    Add your <strong>PayPal payment URL for {selectedPlan}</strong> in Platform → Payments.
+                  </p>
+                )}
+              </div>
+            )}
+            <p className="mb-2 text-[11px] font-medium text-muted-foreground">Or request a callback</p>
             <div className="space-y-3">
               <div>
                 <label className="text-[11px] font-medium text-muted-foreground">Name *</label>
@@ -356,7 +401,7 @@ const Pricing = () => {
                 disabled={createRequest.isPending}
                 className="w-full rounded-full bg-primary py-2.5 text-xs font-semibold uppercase tracking-wider text-primary-foreground hover:scale-[1.02] transition-transform disabled:opacity-50 sm:text-sm"
               >
-                {createRequest.isPending ? "Submitting..." : selectedPlan ? `Start ${selectedPlan} Plan` : "Request Callback"}
+                {createRequest.isPending ? "Submitting..." : `Request ${selectedPlan} Plan`}
               </button>
             </div>
           </div>

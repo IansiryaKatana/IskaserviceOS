@@ -54,7 +54,7 @@ export function TenantSwitcher() {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-full z-50 mt-1 w-64 rounded-xl border border-border bg-card p-1 shadow-lg">
+          <div className="absolute right-0 top-full z-50 mt-1 w-64 rounded-xl border border-border bg-card p-1 shadow-lg">
             <p className="px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Switch Tenant</p>
             {tenants?.map((t) => (
               <button

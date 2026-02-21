@@ -4,11 +4,14 @@ import { Navigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { User, Calendar, Clock, MapPin, ChevronLeft, LogOut, Edit2, Check } from "lucide-react";
-import { toast } from "sonner";
+import { RecordsPagination } from "@/components/RecordsPagination";
+import { useFeedback } from "@/hooks/use-feedback";
+import { usePagination } from "@/hooks/use-pagination";
 
 type Tab = "bookings" | "profile";
 
 const Account = () => {
+  const { showSuccess } = useFeedback();
   const { user, loading, signOut } = useAuth();
   const qc = useQueryClient();
   const [tab, setTab] = useState<Tab>("bookings");
@@ -43,6 +46,8 @@ const Account = () => {
     enabled: !!user,
   });
 
+  const bookingsPag = usePagination(bookings, 6);
+
   const updateProfile = useMutation({
     mutationFn: async (updates: { display_name?: string; phone?: string }) => {
       const { error } = await supabase
@@ -53,7 +58,7 @@ const Account = () => {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["my-profile"] });
-      toast.success("Profile updated");
+      showSuccess("Profile updated", "Your profile has been updated.");
       setEditingProfile(false);
     },
   });
@@ -157,6 +162,7 @@ const Account = () => {
                     </div>
                   </div>
                 ))}
+                <RecordsPagination page={bookingsPag.page} totalPages={bookingsPag.totalPages} onPageChange={bookingsPag.setPage} />
               </div>
             )}
           </div>

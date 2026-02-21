@@ -3,15 +3,19 @@ import { useParams, Link } from "react-router-dom";
 import { useTenant } from "@/hooks/use-tenant";
 import { useTenantReviews, useTenantRatingStats, useCreateReview } from "@/hooks/use-reviews";
 import { Star, X, Check, MessageSquare } from "lucide-react";
-import { toast } from "sonner";
+import { RecordsPagination } from "@/components/RecordsPagination";
+import { useFeedback } from "@/hooks/use-feedback";
+import { usePagination } from "@/hooks/use-pagination";
 import iskaOSLogo from "/iska systems logos.png";
 
 const TenantReviews = () => {
+  const { showSuccess, showError } = useFeedback();
   const { slug } = useParams<{ slug: string }>();
   const { tenant, tenantId } = useTenant();
   const { data: reviews, isLoading: loadingReviews } = useTenantReviews(tenantId);
   const { data: stats } = useTenantRatingStats(tenantId);
   const createReview = useCreateReview();
+  const reviewsPag = usePagination(reviews, 6);
   
   const [showReviewForm, setShowReviewForm] = useState(false);
   const [reviewForm, setReviewForm] = useState({
@@ -24,11 +28,11 @@ const TenantReviews = () => {
 
   const handleSubmitReview = async () => {
     if (!reviewForm.reviewer_name || !tenantId) {
-      toast.error("Name is required");
+      showError("Required", "Name is required");
       return;
     }
     if (reviewForm.rating < 1 || reviewForm.rating > 5) {
-      toast.error("Please select a rating");
+      showError("Required", "Please select a rating");
       return;
     }
     try {
@@ -44,7 +48,7 @@ const TenantReviews = () => {
       setShowReviewForm(false);
       setReviewForm({ rating: 5, title: "", comment: "", reviewer_name: "", reviewer_email: "" });
     } catch (err: any) {
-      toast.error(err.message || "Failed to submit review");
+      showError("Failed", err.message || "Failed to submit review");
     }
   };
 
@@ -146,6 +150,7 @@ const TenantReviews = () => {
                 )}
               </div>
             ))}
+            <RecordsPagination page={reviewsPag.page} totalPages={reviewsPag.totalPages} onPageChange={reviewsPag.setPage} />
           </div>
         ) : (
           <div className="rounded-xl border border-border bg-card p-12 text-center">
