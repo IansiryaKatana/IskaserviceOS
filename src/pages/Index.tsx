@@ -395,17 +395,17 @@ const Index = () => {
             <img src="/iska systems logos.png" alt={tenantName} className="h-8 sm:h-10" />
           )}
         </a>
-        <nav className="hidden gap-2 rounded-full bg-white/10 backdrop-blur-md shadow-lg px-3 py-2 font-body text-xs font-medium uppercase tracking-widest text-hero-muted md:flex">
+        <nav className="hidden gap-2 rounded-full bg-white/10 backdrop-blur-md shadow-lg px-3 py-2 font-body text-xs font-medium uppercase tracking-widest text-white md:flex">
           <button
             onClick={() => { setPanelOpen(true); setStep("service"); }}
-            className={`rounded-full px-4 py-2 uppercase transition-colors hover:text-hero-foreground ${panelOpen ? "bg-white/20 text-hero-foreground" : ""}`}
+            className={`rounded-full px-4 py-2 uppercase transition-colors ${panelOpen ? "bg-white/20 text-hero-foreground" : "text-white hover:text-primary"}`}
           >
             SERVICES
           </button>
           {tenant?.slug && (
             <Link
               to={`/t/${tenant.slug}/reviews`}
-              className={`rounded-full px-4 py-2 flex items-center gap-1 transition-colors hover:text-hero-foreground ${location.pathname === `/t/${tenant.slug}/reviews` ? "bg-white/20 text-hero-foreground" : ""}`}
+              className={`rounded-full px-4 py-2 flex items-center gap-1 transition-colors ${location.pathname === `/t/${tenant.slug}/reviews` ? "bg-white/20 text-hero-foreground" : "text-white hover:text-primary"}`}
             >
               Reviews
               {ratingStats && ratingStats.average_rating > 0 && (
@@ -418,7 +418,7 @@ const Index = () => {
           )}
           <a
             href="/account"
-            className={`rounded-full px-4 py-2 transition-colors hover:text-hero-foreground ${location.pathname === "/account" ? "bg-white/20 text-hero-foreground" : ""}`}
+            className={`rounded-full px-4 py-2 transition-colors ${location.pathname === "/account" ? "bg-white/20 text-hero-foreground" : "text-white hover:text-primary"}`}
           >
             Account
           </a>

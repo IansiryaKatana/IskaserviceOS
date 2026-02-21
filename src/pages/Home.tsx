@@ -5,6 +5,7 @@ import { useSiteSetting } from "@/hooks/use-site-settings";
 import { ArrowRight, ArrowUpRight, Building2, Scissors, Sparkles, Car, Stethoscope, Dumbbell, X, Phone, Mail } from "lucide-react";
 import { useCreateTenantRequest } from "@/hooks/use-tenant-requests";
 import { useFeedback } from "@/hooks/use-feedback";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 
 interface TenantPreview {
   id: string;
@@ -38,6 +39,7 @@ const Home = () => {
   const [tenants, setTenants] = useState<TenantPreview[]>([]);
   const [loading, setLoading] = useState(true);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [selectedUseCase, setSelectedUseCase] = useState<TenantPreview | null>(null);
   const [showRequestDialog, setShowRequestDialog] = useState(false);
   const [requestForm, setRequestForm] = useState({
     name: "",
@@ -85,20 +87,20 @@ const Home = () => {
         <a href="/">
           <img src="/iska systems logos.png" alt="Iska Service OS" className="h-8 sm:h-10" />
         </a>
-        <nav className="hidden gap-2 rounded-full bg-white/10 backdrop-blur-md shadow-lg px-3 py-2 font-body text-xs font-medium uppercase tracking-widest text-hero-muted md:flex">
+        <nav className="hidden gap-2 rounded-full bg-white/10 backdrop-blur-md shadow-lg px-3 py-2 font-body text-xs font-medium uppercase tracking-widest text-white md:flex">
           <button
             onClick={() => setPanelOpen(true)}
             className={`rounded-full px-4 py-2 transition-colors uppercase ${
-              location.pathname === "/" ? "text-white" : "hover:text-hero-foreground"
+              panelOpen ? "text-white" : "bg-black text-white hover:font-semibold"
             }`}
-            style={location.pathname === "/" ? { backgroundColor: '#d16e17' } : {}}
+            style={panelOpen ? { backgroundColor: '#d16e17' } : {}}
           >
-            DEMOS
+            Use cases
           </button>
           <Link 
             to="/pricing" 
             className={`rounded-full px-4 py-2 transition-colors ${
-              location.pathname === "/pricing" ? "text-white" : "hover:text-hero-foreground"
+              location.pathname === "/pricing" ? "text-white" : "text-white hover:text-primary"
             }`}
             style={location.pathname === "/pricing" ? { backgroundColor: '#d16e17' } : {}}
           >
@@ -107,7 +109,7 @@ const Home = () => {
           <Link 
             to="/reviews" 
             className={`rounded-full px-4 py-2 transition-colors ${
-              location.pathname === "/reviews" ? "text-white" : "hover:text-hero-foreground"
+              location.pathname === "/reviews" ? "text-white" : "text-white hover:text-primary"
             }`}
             style={location.pathname === "/reviews" ? { backgroundColor: '#d16e17' } : {}}
           >
@@ -121,7 +123,7 @@ const Home = () => {
           onClick={() => setPanelOpen(true)}
           className="rounded-full bg-primary px-4 py-2 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-105 md:hidden"
         >
-          DEMOS
+          Use cases
         </button>
       </header>
 
@@ -147,29 +149,25 @@ const Home = () => {
         </div>
       </main>
 
-      {/* Right-anchored Demo Panel (matches tenant page panel style) */}
-      {panelOpen && (
-        <div className="fixed inset-0 z-50 flex justify-end">
-          <div
-            className="absolute inset-0 bg-foreground/30 backdrop-blur-sm"
-            onClick={() => setPanelOpen(false)}
-          />
-          <div className="animate-slide-in-right relative z-10 flex h-full w-full max-w-md flex-col bg-card shadow-2xl sm:max-w-lg">
-            {/* Panel header */}
-            <div className="flex items-center justify-between border-b border-border px-4 py-3 sm:px-5">
-              <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
-                Live Demos
-              </h3>
-              <button
-                onClick={() => setPanelOpen(false)}
-                className="rounded-lg p-1 text-muted-foreground hover:text-card-foreground"
-              >
-                <X className="h-5 w-5" />
-              </button>
+      {/* Use cases panel: same behavior & positioning as Services/booking dialog */}
+      <Dialog open={panelOpen} onOpenChange={(open) => { setPanelOpen(open); if (!open) setSelectedUseCase(null); }}>
+        <DialogContent
+          hideOverlay
+          closeButtonClassName="absolute right-4 top-4 sm:right-5 rounded-lg bg-muted p-1.5 hover:bg-muted/80 data-[state=open]:!bg-muted"
+          className="booking-dialog animate-none left-auto right-6 top-20 bottom-6 z-[100] flex w-full max-w-[calc(28rem-60px)] translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-l-xl border-0 border-l bg-card p-0 shadow-2xl sm:right-10 sm:top-24 sm:bottom-8 sm:max-w-[calc(32rem-60px)] md:top-32 md:bottom-10 lg:right-12 lg:top-36 lg:bottom-12"
+        >
+          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+            {/* Panel header: same as booking dialog location step */}
+            <div className="flex min-w-0 shrink-0 items-center justify-between overflow-hidden p-4 sm:p-5">
+              <div className="flex items-center gap-2">
+                <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
+                  Use cases
+                </h3>
+              </div>
             </div>
 
-            {/* Panel content */}
-            <div className="flex-1 overflow-y-auto px-4 py-3 sm:px-5 sm:py-4">
+            {/* Panel content: same scroll/padding as booking dialog */}
+            <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 sm:p-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none]" style={{ scrollbarGutter: "stable" }}>
               <p className="mb-4 text-xs text-muted-foreground">
                 Explore how Iska Service OS adapts to different industries
               </p>
@@ -181,44 +179,80 @@ const Home = () => {
                   ))}
                 </div>
               ) : (
-                <div className="space-y-2">
-                  {tenants.map((tenant) => {
-                    const primaryColor = tenant.theme_config?.primary_color || "hsl(var(--primary))";
-                    return (
-                      <button
-                        key={tenant.id}
-                        onClick={() => navigate(`/t/${tenant.slug}`)}
-                        className="group flex w-full items-center gap-3 rounded-xl border border-border p-3 text-left transition-all hover:border-primary/40 sm:p-4"
-                      >
-                        <div
-                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-primary"
-                          style={{ backgroundColor: primaryColor + "1a" }}
+                <>
+                  <div className="space-y-2">
+                    {tenants.map((tenant, idx) => {
+                      const primaryColor = tenant.theme_config?.primary_color || "hsl(var(--primary))";
+                      const isSelected = selectedUseCase?.id === tenant.id;
+                      const pastels = [
+                        { base: "bg-rose-50 dark:bg-rose-950/30", selected: "bg-rose-200/80 dark:bg-rose-900/50" },
+                        { base: "bg-violet-50 dark:bg-violet-950/30", selected: "bg-violet-200/80 dark:bg-violet-900/50" },
+                        { base: "bg-amber-50 dark:bg-amber-950/30", selected: "bg-amber-200/80 dark:bg-amber-900/50" },
+                        { base: "bg-emerald-50 dark:bg-emerald-950/30", selected: "bg-emerald-200/80 dark:bg-emerald-900/50" },
+                        { base: "bg-sky-50 dark:bg-sky-950/30", selected: "bg-sky-200/80 dark:bg-sky-900/50" },
+                      ];
+                      const pastel = pastels[idx % pastels.length];
+                      const bgClass = isSelected ? pastel.selected : pastel.base;
+                      return (
+                        <button
+                          key={tenant.id}
+                          onClick={() => setSelectedUseCase(tenant)}
+                          className={`group flex w-full items-center gap-3 rounded-xl p-3 text-left transition-all shadow-sm hover:shadow ${bgClass} sm:p-4`}
                         >
-                          {BUSINESS_ICONS[tenant.business_type] || <Building2 className="h-5 w-5" />}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold text-card-foreground">{tenant.name}</p>
-                          <p className="text-[11px] text-muted-foreground">
-                            {BUSINESS_LABELS[tenant.business_type] || tenant.business_type}
-                          </p>
-                        </div>
-                        <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground transition-all group-hover:translate-x-1 group-hover:text-card-foreground" />
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+                          <div
+                            className="flex h-14 w-12 shrink-0 items-center justify-center rounded-xl text-primary"
+                            style={{ backgroundColor: primaryColor + "1a" }}
+                          >
+                            {BUSINESS_ICONS[tenant.business_type] || <Building2 className="h-5 w-5" />}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-card-foreground">{tenant.name}</p>
+                            <p className="text-[11px] text-muted-foreground">
+                              {BUSINESS_LABELS[tenant.business_type] || tenant.business_type}
+                            </p>
+                          </div>
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary transition-all group-hover:bg-primary/20 group-hover:text-primary">
+                            <ArrowUpRight className="h-4 w-4" />
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
 
-            {/* Panel footer */}
-            <div className="border-t border-border px-4 py-3 sm:px-5">
-              <p className="text-center text-[10px] uppercase tracking-widest text-muted-foreground">
-                {tenants.length} active tenants · {new Set(tenants.map(t => t.business_type)).size} industries
-              </p>
+                  {/* Fade-up section when a use case is selected */}
+                  {selectedUseCase && (
+                    <div className="mt-4 animate-fade-in rounded-xl border border-border bg-card p-4 shadow-sm sm:p-5">
+                      <p className="mb-2 text-xs font-semibold text-card-foreground">
+                        {selectedUseCase.name}
+                      </p>
+                      <p className="mb-4 text-[11px] text-muted-foreground">
+                        {BUSINESS_LABELS[selectedUseCase.business_type] || selectedUseCase.business_type}
+                      </p>
+                      <button
+                        onClick={() => {
+                          navigate(`/t/${selectedUseCase.slug}`);
+                          setPanelOpen(false);
+                          setSelectedUseCase(null);
+                        }}
+                        className="w-full rounded-xl bg-primary px-4 py-3 text-sm font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-[1.02]"
+                      >
+                        Check it out
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* Footer: same padding as content */}
+              <div className="mt-4 pt-4 border-t border-border">
+                <p className="text-center text-[10px] uppercase tracking-widest text-muted-foreground">
+                  {tenants.length} active tenants · {new Set(tenants.map(t => t.business_type)).size} industries
+                </p>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
 
       {/* Request Callback Dialog */}
       {showRequestDialog && (

@@ -1,15 +1,22 @@
-import { Link } from "react-router-dom";
-import { Star, Building2 } from "lucide-react";
+import { Link, useLocation } from "react-router-dom";
+import { Star, Building2, ChevronLeft, ChevronRight, Check } from "lucide-react";
 import { usePlatformReviews } from "@/hooks/use-reviews";
+import { useSiteSetting } from "@/hooks/use-site-settings";
 import { Carousel, CarouselContent, CarouselItem, type CarouselApi } from "@/components/ui/carousel";
 import { useState, useEffect } from "react";
 import iskaOSLogo from "/iska systems logos.png";
 
 const Reviews = () => {
   const { data: reviews, isLoading } = usePlatformReviews();
+  const { data: desktopBg } = useSiteSetting("reviews_bg_desktop", null);
+  const { data: mobileBg } = useSiteSetting("reviews_bg_mobile", null);
+  const location = useLocation();
   const [api, setApi] = useState<CarouselApi>();
   const [current, setCurrent] = useState(0);
   const [count, setCount] = useState(0);
+
+  const bgImage = desktopBg?.value || "/images/hero-1.jpg";
+  const bgMobileImage = mobileBg?.value || bgImage;
 
   useEffect(() => {
     if (!api) return;
@@ -23,42 +30,99 @@ const Reviews = () => {
   }, [api]);
 
   return (
-    <div className="min-h-screen bg-background font-body">
-      {/* Header */}
-      <header className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-card px-4 py-3 sm:px-6">
+    <div className="relative min-h-screen overflow-hidden bg-hero font-body">
+      {/* Full-screen Background Image */}
+      <div className="absolute inset-0">
+        <picture>
+          <source media="(max-width: 767px)" srcSet={bgMobileImage} />
+          <img
+            src={bgImage}
+            alt="Reviews"
+            className="h-full w-full object-cover grayscale-hero"
+          />
+        </picture>
+        <div className="hero-overlay absolute inset-0" />
+      </div>
+
+      {/* Header: same style as Home */}
+      <header className="relative z-10 flex items-center justify-between px-4 py-4 sm:px-8 sm:py-6 lg:px-12">
         <Link to="/" className="flex items-center gap-2">
           <img src={iskaOSLogo} alt="Iska Service OS" className="h-8 sm:h-10" />
         </Link>
-        <nav className="hidden gap-6 text-xs font-medium uppercase tracking-widest text-muted-foreground md:flex">
-          <Link to="/" className="hover:text-foreground">Home</Link>
-          <Link to="/pricing" className="hover:text-foreground">Pricing</Link>
-          <Link to="/reviews" className="text-primary">Reviews</Link>
-          <Link to="/login" className="hover:text-foreground">Sign In</Link>
+        <nav className="hidden gap-2 rounded-full bg-white/10 backdrop-blur-md shadow-lg px-3 py-2 font-body text-xs font-medium uppercase tracking-widest text-white md:flex">
+          <Link
+            to="/"
+            className={`rounded-full px-4 py-2 transition-colors ${location.pathname === "/" ? "text-white" : "text-white hover:text-primary"}`}
+            style={location.pathname === "/" ? { backgroundColor: "#d16e17" } : {}}
+          >
+            Home
+          </Link>
+          <Link
+            to="/pricing"
+            className={`rounded-full px-4 py-2 transition-colors ${location.pathname === "/pricing" ? "text-white" : "text-white hover:text-primary"}`}
+            style={location.pathname === "/pricing" ? { backgroundColor: "#d16e17" } : {}}
+          >
+            Pricing
+          </Link>
+          <Link
+            to="/reviews"
+            className={`rounded-full px-4 py-2 transition-colors ${location.pathname === "/reviews" ? "text-white" : "text-white hover:text-primary"}`}
+            style={location.pathname === "/reviews" ? { backgroundColor: "#d16e17" } : {}}
+          >
+            Reviews
+          </Link>
+          <a
+            href="/login"
+            className="rounded-full bg-white px-4 py-2 text-black transition-colors hover:bg-white/90"
+          >
+            Sign In
+          </a>
         </nav>
       </header>
 
-      <main className="mx-auto max-w-4xl px-4 py-12 sm:px-6 sm:py-16 flex flex-col justify-center min-h-[calc(100vh-80px)]">
-        <div className="text-center mb-12">
-          <h1 className="font-display text-4xl font-bold text-foreground sm:text-5xl lg:text-6xl mb-4">
-            What Our Tenants Say
+      <main className="relative z-10 flex min-h-[calc(100vh-80px)] flex-col px-4 pb-12 pt-6 sm:px-6 sm:pb-16 sm:pt-8 lg:px-8 lg:pb-20 lg:pt-10">
+        {/* Title block: centered, with description */}
+        <div className="mb-8 text-center sm:mb-10">
+          <h1 className="font-display text-3xl font-bold leading-tight text-hero-foreground sm:text-4xl lg:text-5xl">
+            What Our
+            <br />
+            Tenants Say
           </h1>
-          <p className="text-lg text-muted-foreground">
+          <p className="mt-2 text-xs font-medium uppercase tracking-widest text-white sm:text-sm">
             Real feedback from businesses using Iska Service OS
           </p>
         </div>
 
         {isLoading ? (
-          <div className="space-y-4">
+          <div className="flex justify-center gap-4">
             {[1, 2, 3].map((i) => (
-              <div key={i} className="h-32 animate-pulse rounded-xl bg-secondary" />
+              <div key={i} className="h-48 w-72 animate-pulse rounded-xl bg-white/10 backdrop-blur-md" />
             ))}
           </div>
         ) : reviews && reviews.length > 0 ? (
-          <div className="relative">
-            {/* Edge fade gradients */}
-            <div className="absolute left-0 top-0 bottom-0 w-20 bg-gradient-to-r from-background to-transparent z-10 pointer-events-none" />
-            <div className="absolute right-0 top-0 bottom-0 w-20 bg-gradient-to-l from-background to-transparent z-10 pointer-events-none" />
-            
+          <div className="relative w-full">
+            {/* Nav arrows (reference: white circles, black arrows) */}
+            <div className="flex items-center justify-center gap-3 mb-6">
+              <button
+                type="button"
+                onClick={() => api?.scrollPrev()}
+                disabled={current <= 0}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-black shadow-md transition-opacity hover:bg-white/90 disabled:opacity-40 disabled:pointer-events-none"
+                aria-label="Previous testimonial"
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => api?.scrollNext()}
+                disabled={count > 0 && current >= count - 1}
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-black shadow-md transition-opacity hover:bg-white/90 disabled:opacity-40 disabled:pointer-events-none"
+                aria-label="Next testimonial"
+              >
+                <ChevronRight className="h-5 w-5" />
+              </button>
+            </div>
+
             <Carousel
               setApi={setApi}
               opts={{
@@ -70,68 +134,50 @@ const Reviews = () => {
               <CarouselContent className="-ml-2 md:-ml-4">
                 {reviews.map((review: any) => (
                   <CarouselItem key={review.id} className="pl-2 md:pl-4 md:basis-1/3">
-                    <div className="rounded-xl border border-border bg-card p-6 h-full">
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <div className="flex items-center gap-2 mb-1">
-                            {[...Array(5)].map((_, i) => (
-                              <Star
-                                key={i}
-                                className={`h-4 w-4 ${
-                                  i < review.rating
-                                    ? "fill-primary text-primary"
-                                    : "text-muted-foreground"
-                                }`}
-                              />
-                            ))}
-                          </div>
-                          <h3 className="text-sm font-semibold text-card-foreground">{review.reviewer_name}</h3>
-                          {review.tenants && (
-                            <p className="text-xs text-muted-foreground">
-                              {review.tenants.name} · {new Date(review.created_at).toLocaleDateString()}
-                            </p>
-                          )}
-                        </div>
+                    {/* Card: no outline, white font, reference sizes + height */}
+                    <div className="rounded-xl min-h-[320px] flex flex-col bg-sky-500/10 backdrop-blur-md p-5 shadow-lg sm:p-6">
+                      <div className="flex items-center gap-1 mb-3">
+                        {[...Array(5)].map((_, i) => (
+                          <Star
+                            key={i}
+                            className={`h-4 w-4 ${
+                              i < review.rating
+                                ? "fill-white text-white"
+                                : "text-white/40"
+                            }`}
+                          />
+                        ))}
+                      </div>
+                      {review.title && (
+                        <h4 className="text-base font-bold text-white mb-2 sm:text-lg">{review.title}</h4>
+                      )}
+                      {review.comment && (
+                        <p className="text-sm text-white/90 leading-relaxed line-clamp-4 mb-4 flex-1 sm:text-base">{review.comment}</p>
+                      )}
+                      <div className="flex items-center justify-between gap-2 mt-auto">
+                        <p className="text-sm font-semibold text-white sm:text-base">{review.reviewer_name}</p>
                         {review.is_verified && (
-                          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary shrink-0">
+                          <span className="flex items-center gap-0.5 text-xs font-semibold text-white sm:text-sm">
+                            <Check className="h-3.5 w-3.5" />
                             Verified
                           </span>
                         )}
                       </div>
-                      {review.title && (
-                        <h4 className="text-sm font-semibold text-card-foreground mb-2">{review.title}</h4>
-                      )}
-                      {review.comment && (
-                        <p className="text-xs text-muted-foreground leading-relaxed line-clamp-4">{review.comment}</p>
+                      {review.tenants && (
+                        <p className="text-xs text-white/80 mt-1 sm:text-sm">
+                          {review.tenants.name} · {new Date(review.created_at).toLocaleDateString()}
+                        </p>
                       )}
                     </div>
                   </CarouselItem>
                 ))}
               </CarouselContent>
             </Carousel>
-            
-            {/* Dot indicators */}
-            {count > 0 && (
-              <div className="flex justify-center gap-2 mt-6">
-                {Array.from({ length: count }).map((_, index) => (
-                  <button
-                    key={index}
-                    onClick={() => api?.scrollTo(index)}
-                    className={`h-1.5 transition-all ${
-                      index === current
-                        ? "w-8 bg-primary"
-                        : "w-1.5 bg-muted-foreground/30 hover:bg-muted-foreground/50"
-                    } rounded-full`}
-                    aria-label={`Go to slide ${index + 1}`}
-                  />
-                ))}
-              </div>
-            )}
           </div>
         ) : (
-          <div className="rounded-xl border border-border bg-card p-12 text-center">
-            <Building2 className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-            <p className="text-sm text-muted-foreground">No reviews yet. Be the first to review!</p>
+          <div className="mx-auto w-full max-w-md rounded-xl border-0 bg-white/10 backdrop-blur-md p-8 text-center shadow-lg">
+            <Building2 className="mx-auto h-10 w-10 text-hero-muted mb-3" />
+            <p className="text-xs text-hero-muted sm:text-sm">No reviews yet. Be the first to review!</p>
           </div>
         )}
       </main>

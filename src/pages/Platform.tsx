@@ -93,6 +93,8 @@ const DEFAULT_THEME: ThemeForm = {
   panel_position: "right",
 };
 
+type BgPage = "homepage" | "reviews";
+
 // Media Management Component
 const MediaManagement = () => {
   const { data: settings } = useSiteSettings(null);
@@ -100,6 +102,8 @@ const MediaManagement = () => {
   const { showSuccess, showError } = useFeedback();
   const [desktopImage, setDesktopImage] = useState("");
   const [mobileImage, setMobileImage] = useState("");
+  const [reviewsDesktopImage, setReviewsDesktopImage] = useState("");
+  const [reviewsMobileImage, setReviewsMobileImage] = useState("");
   const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
@@ -107,16 +111,23 @@ const MediaManagement = () => {
     const mobile = settings?.find(s => s.key === "homepage_bg_mobile");
     setDesktopImage(desktop?.value || "/images/hero-1.jpg");
     setMobileImage(mobile?.value || "/images/hero-1.jpg");
+
+    const reviewsDesktop = settings?.find(s => s.key === "reviews_bg_desktop");
+    const reviewsMobile = settings?.find(s => s.key === "reviews_bg_mobile");
+    setReviewsDesktopImage(reviewsDesktop?.value || "/images/hero-1.jpg");
+    setReviewsMobileImage(reviewsMobile?.value || "/images/hero-1.jpg");
   }, [settings]);
 
-  const handleImageUpload = async (file: File, type: "desktop" | "mobile") => {
+  const getKeyPrefix = (page: BgPage) => page === "homepage" ? "homepage_bg" : "reviews_bg";
+  const getStorageFolder = (page: BgPage) => page === "homepage" ? "homepage" : "reviews";
+
+  const handleImageUpload = async (file: File, type: "desktop" | "mobile", page: BgPage) => {
     if (!file) return;
     setUploading(true);
     try {
-      // Upload to Supabase Storage
       const fileExt = file.name.split(".").pop();
-      const fileName = `homepage-bg-${type}-${Date.now()}.${fileExt}`;
-      const filePath = `homepage/${fileName}`;
+      const fileName = `${getStorageFolder(page)}-bg-${type}-${Date.now()}.${fileExt}`;
+      const filePath = `${getStorageFolder(page)}/${fileName}`;
 
       const { error: uploadError } = await supabase.storage
         .from("service-images")
@@ -128,15 +139,19 @@ const MediaManagement = () => {
         .from("service-images")
         .getPublicUrl(filePath);
 
-      // Save to site_settings
       await upsertSetting.mutateAsync({
-        key: `homepage_bg_${type}`,
+        key: `${getKeyPrefix(page)}_${type}`,
         value: publicUrl,
         tenant_id: null,
       });
 
-      if (type === "desktop") setDesktopImage(publicUrl);
-      else setMobileImage(publicUrl);
+      if (page === "homepage") {
+        if (type === "desktop") setDesktopImage(publicUrl);
+        else setMobileImage(publicUrl);
+      } else {
+        if (type === "desktop") setReviewsDesktopImage(publicUrl);
+        else setReviewsMobileImage(publicUrl);
+      }
 
       showSuccess("Image uploaded", `${type === "desktop" ? "Desktop" : "Mobile"} image saved successfully.`);
     } catch (err: any) {
@@ -146,15 +161,20 @@ const MediaManagement = () => {
     }
   };
 
-  const handleUrlChange = async (url: string, type: "desktop" | "mobile") => {
+  const handleUrlChange = async (url: string, type: "desktop" | "mobile", page: BgPage) => {
     try {
       await upsertSetting.mutateAsync({
-        key: `homepage_bg_${type}`,
+        key: `${getKeyPrefix(page)}_${type}`,
         value: url,
         tenant_id: null,
       });
-      if (type === "desktop") setDesktopImage(url);
-      else setMobileImage(url);
+      if (page === "homepage") {
+        if (type === "desktop") setDesktopImage(url);
+        else setMobileImage(url);
+      } else {
+        if (type === "desktop") setReviewsDesktopImage(url);
+        else setReviewsMobileImage(url);
+      }
       showSuccess("Image updated", `${type === "desktop" ? "Desktop" : "Mobile"} image saved successfully.`);
     } catch (err: any) {
       showError("Update failed", err.message || "Failed to update image");
@@ -165,11 +185,14 @@ const MediaManagement = () => {
     <div>
       <div className="mb-4 sm:mb-6">
         <h2 className="font-display text-lg font-bold text-foreground sm:text-xl">Media Management</h2>
-        <p className="mt-1 text-xs text-muted-foreground">Manage homepage background images</p>
+        <p className="mt-1 text-xs text-muted-foreground">Manage homepage and reviews page background images</p>
       </div>
 
       <div className="space-y-6">
-        {/* Desktop Background */}
+        <div className="border-b border-border pb-2">
+          <h3 className="font-display text-base font-bold text-foreground sm:text-lg">Homepage Background</h3>
+        </div>
+        {/* Homepage Desktop Background */}
         <div className="rounded-xl border border-border bg-card p-4 sm:p-6">
           <h3 className="mb-4 text-sm font-semibold text-card-foreground">Desktop Background Image</h3>
           <div className="space-y-3">
@@ -190,7 +213,7 @@ const MediaManagement = () => {
                 accept="image/*"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
-                  if (file) handleImageUpload(file, "desktop");
+                  if (file) handleImageUpload(file, "desktop", "homepage");
                 }}
                 disabled={uploading}
                 className="w-full text-xs file:mr-4 file:rounded-full file:border-0 file:bg-primary file:px-4 file:py-2 file:text-xs file:font-semibold file:text-primary-foreground file:hover:bg-primary/90 disabled:opacity-50"
@@ -207,7 +230,7 @@ const MediaManagement = () => {
                   className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm"
                 />
                 <button
-                  onClick={() => handleUrlChange(desktopImage, "desktop")}
+                  onClick={() => handleUrlChange(desktopImage, "desktop", "homepage")}
                   disabled={uploading || !desktopImage}
                   className="rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                 >
@@ -218,7 +241,7 @@ const MediaManagement = () => {
           </div>
         </div>
 
-        {/* Mobile Background */}
+        {/* Homepage Mobile Background */}
         <div className="rounded-xl border border-border bg-card p-4 sm:p-6">
           <h3 className="mb-4 text-sm font-semibold text-card-foreground">Mobile Background Image</h3>
           <div className="space-y-3">
@@ -239,7 +262,7 @@ const MediaManagement = () => {
                 accept="image/*"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
-                  if (file) handleImageUpload(file, "mobile");
+                  if (file) handleImageUpload(file, "mobile", "homepage");
                 }}
                 disabled={uploading}
                 className="w-full text-xs file:mr-4 file:rounded-full file:border-0 file:bg-primary file:px-4 file:py-2 file:text-xs file:font-semibold file:text-primary-foreground file:hover:bg-primary/90 disabled:opacity-50"
@@ -256,8 +279,108 @@ const MediaManagement = () => {
                   className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm"
                 />
                 <button
-                  onClick={() => handleUrlChange(mobileImage, "mobile")}
+                  onClick={() => handleUrlChange(mobileImage, "mobile", "homepage")}
                   disabled={uploading || !mobileImage}
+                  className="rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Reviews page background */}
+        <div className="border-t border-border pt-6 mt-8">
+          <h3 className="font-display text-base font-bold text-foreground sm:text-lg mb-1">Reviews Page Background</h3>
+          <p className="text-xs text-muted-foreground mb-4">Background image for the /reviews page. Falls back to homepage image if not set.</p>
+        </div>
+        <div className="rounded-xl border border-border bg-card p-4 sm:p-6">
+          <h3 className="mb-4 text-sm font-semibold text-card-foreground">Reviews – Desktop Background</h3>
+          <div className="space-y-3">
+            <div className="relative aspect-video w-full overflow-hidden rounded-lg border border-border bg-secondary">
+              <img
+                src={reviewsDesktopImage}
+                alt="Reviews desktop background preview"
+                className="h-full w-full object-cover"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = "/images/hero-1.jpg";
+                }}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[11px] font-medium text-muted-foreground">Upload Image</label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleImageUpload(file, "desktop", "reviews");
+                }}
+                disabled={uploading}
+                className="w-full text-xs file:mr-4 file:rounded-full file:border-0 file:bg-primary file:px-4 file:py-2 file:text-xs file:font-semibold file:text-primary-foreground file:hover:bg-primary/90 disabled:opacity-50"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[11px] font-medium text-muted-foreground">Or Enter URL</label>
+              <div className="flex gap-2">
+                <input
+                  type="url"
+                  value={reviewsDesktopImage}
+                  onChange={(e) => setReviewsDesktopImage(e.target.value)}
+                  placeholder="https://..."
+                  className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm"
+                />
+                <button
+                  onClick={() => handleUrlChange(reviewsDesktopImage, "desktop", "reviews")}
+                  disabled={uploading || !reviewsDesktopImage}
+                  className="rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="rounded-xl border border-border bg-card p-4 sm:p-6">
+          <h3 className="mb-4 text-sm font-semibold text-card-foreground">Reviews – Mobile Background</h3>
+          <div className="space-y-3">
+            <div className="relative aspect-[9/16] w-full max-w-xs overflow-hidden rounded-lg border border-border bg-secondary">
+              <img
+                src={reviewsMobileImage}
+                alt="Reviews mobile background preview"
+                className="h-full w-full object-cover"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).src = "/images/hero-1.jpg";
+                }}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[11px] font-medium text-muted-foreground">Upload Image</label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleImageUpload(file, "mobile", "reviews");
+                }}
+                disabled={uploading}
+                className="w-full text-xs file:mr-4 file:rounded-full file:border-0 file:bg-primary file:px-4 file:py-2 file:text-xs file:font-semibold file:text-primary-foreground file:hover:bg-primary/90 disabled:opacity-50"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[11px] font-medium text-muted-foreground">Or Enter URL</label>
+              <div className="flex gap-2">
+                <input
+                  type="url"
+                  value={reviewsMobileImage}
+                  onChange={(e) => setReviewsMobileImage(e.target.value)}
+                  placeholder="https://..."
+                  className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm"
+                />
+                <button
+                  onClick={() => handleUrlChange(reviewsMobileImage, "mobile", "reviews")}
+                  disabled={uploading || !reviewsMobileImage}
                   className="rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                 >
                   Save
