@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
-import { Star, Building2, ChevronLeft, ChevronRight, Check, Menu, MessageSquare } from "lucide-react";
+import { Star, Building2, ChevronLeft, ChevronRight, Check, Menu, MessageSquare, ArrowUpRight } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { usePlatformReviews } from "@/hooks/use-reviews";
 import { useSiteSetting } from "@/hooks/use-site-settings";
@@ -90,35 +90,49 @@ const Reviews = () => {
               <Menu className="h-5 w-5" />
             </button>
           </SheetTrigger>
-          <SheetContent side="right" className="bg-card border-border">
-            <div className="mt-6 flex flex-col gap-2">
+          <SheetContent side="right" className="border-border bg-card">
+            <div className="mt-6 grid grid-cols-2 gap-3 px-1">
               <Link
                 to="/"
                 onClick={() => setMobileMenuOpen(false)}
-                className={`rounded-full px-4 py-3 text-sm font-medium uppercase ${location.pathname === "/" ? "bg-primary text-primary-foreground" : "text-foreground"}`}
+                className={`flex min-h-[100px] flex-col rounded-xl p-4 text-left transition-all ${location.pathname === "/" ? "bg-primary text-primary-foreground" : "bg-primary/10 hover:bg-primary/15"}`}
               >
-                Home
+                <div className="flex items-start justify-between gap-2">
+                  <span className={`text-sm font-semibold uppercase tracking-wider ${location.pathname === "/" ? "text-primary-foreground" : "text-card-foreground"}`}>Home</span>
+                  <ArrowUpRight className={`h-4 w-4 shrink-0 ${location.pathname === "/" ? "text-primary-foreground/80" : "text-card-foreground/70"}`} />
+                </div>
+                <p className={`mt-1 text-[11px] ${location.pathname === "/" ? "text-primary-foreground/80" : "text-muted-foreground"}`}>Back to home</p>
               </Link>
               <Link
                 to="/pricing"
                 onClick={() => setMobileMenuOpen(false)}
-                className={`rounded-full px-4 py-3 text-sm font-medium uppercase ${location.pathname === "/pricing" ? "bg-primary text-primary-foreground" : "text-foreground"}`}
+                className={`flex min-h-[100px] flex-col rounded-xl p-4 text-left transition-all ${location.pathname === "/pricing" ? "bg-primary text-primary-foreground" : "bg-primary/10 hover:bg-primary/15"}`}
               >
-                Pricing
+                <div className="flex items-start justify-between gap-2">
+                  <span className={`text-sm font-semibold uppercase tracking-wider ${location.pathname === "/pricing" ? "text-primary-foreground" : "text-card-foreground"}`}>Pricing</span>
+                  <ArrowUpRight className={`h-4 w-4 shrink-0 ${location.pathname === "/pricing" ? "text-primary-foreground/80" : "text-card-foreground/70"}`} />
+                </div>
+                <p className={`mt-1 text-[11px] ${location.pathname === "/pricing" ? "text-primary-foreground/80" : "text-muted-foreground"}`}>Plans</p>
               </Link>
+              <div className="col-span-2 border-t border-dotted border-primary/30 py-3" aria-hidden />
               <Link
                 to="/reviews"
                 onClick={() => setMobileMenuOpen(false)}
-                className={`rounded-full px-4 py-3 text-sm font-medium uppercase ${location.pathname === "/reviews" ? "bg-primary text-primary-foreground" : "text-foreground"}`}
+                className={`flex min-h-[100px] flex-col rounded-xl p-4 text-left transition-all ${location.pathname === "/reviews" ? "bg-primary text-primary-foreground" : "bg-primary/10 hover:bg-primary/15"}`}
               >
-                Reviews
+                <div className="flex items-start justify-between gap-2">
+                  <span className={`text-sm font-semibold uppercase tracking-wider ${location.pathname === "/reviews" ? "text-primary-foreground" : "text-card-foreground"}`}>Reviews</span>
+                  <ArrowUpRight className={`h-4 w-4 shrink-0 ${location.pathname === "/reviews" ? "text-primary-foreground/80" : "text-card-foreground/70"}`} />
+                </div>
+                <p className={`mt-1 text-[11px] ${location.pathname === "/reviews" ? "text-primary-foreground/80" : "text-muted-foreground"}`}>Testimonials</p>
               </Link>
               <a
                 href="/login"
                 onClick={() => setMobileMenuOpen(false)}
-                className="rounded-full bg-primary px-4 py-3 text-center text-sm font-medium uppercase text-primary-foreground"
+                className="flex min-h-[100px] items-center justify-between rounded-xl bg-primary p-4 text-sm font-semibold uppercase tracking-wider text-primary-foreground hover:opacity-95"
               >
-                Sign In
+                <span>Sign In</span>
+                <ArrowUpRight className="h-4 w-4 shrink-0" />
               </a>
             </div>
           </SheetContent>

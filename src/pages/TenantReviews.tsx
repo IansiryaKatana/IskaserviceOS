@@ -3,7 +3,7 @@ import { useParams, Link, useLocation } from "react-router-dom";
 import { useTenant } from "@/hooks/use-tenant";
 import { useTenantReviews, useTenantRatingStats, useCreateReview } from "@/hooks/use-reviews";
 import { useSiteSetting } from "@/hooks/use-site-settings";
-import { Star, X, Check, MessageSquare, ChevronLeft, ChevronRight, Building2, Menu } from "lucide-react";
+import { Star, X, Check, MessageSquare, ChevronLeft, ChevronRight, Building2, Menu, ArrowUpRight } from "lucide-react";
 import { Carousel, CarouselContent, CarouselItem, type CarouselApi } from "@/components/ui/carousel";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useFeedback } from "@/hooks/use-feedback";
@@ -134,30 +134,42 @@ const TenantReviews = () => {
               <Menu className="h-5 w-5" />
             </button>
           </SheetTrigger>
-          <SheetContent side="right" className="bg-card border-border">
-            <div className="mt-6 flex flex-col gap-2">
+          <SheetContent side="right" className="border-border bg-card">
+            <div className="mt-6 grid grid-cols-2 gap-3 px-1">
               <Link
                 to={tenant?.slug ? `/t/${tenant.slug}` : "/"}
                 onClick={() => setMobileMenuOpen(false)}
-                className="rounded-full px-4 py-3 text-sm font-medium uppercase text-foreground"
+                className="flex min-h-[100px] flex-col rounded-xl bg-primary/10 p-4 text-left transition-all hover:bg-primary/15"
               >
-                Services
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm font-semibold uppercase tracking-wider text-card-foreground">Services</span>
+                  <ArrowUpRight className="h-4 w-4 shrink-0 text-card-foreground/70" />
+                </div>
+                <p className="mt-1 text-[11px] text-muted-foreground">Book now</p>
               </Link>
-              {tenant?.slug && (
+              {tenant?.slug ? (
                 <Link
                   to={reviewsPath}
                   onClick={() => setMobileMenuOpen(false)}
-                  className={`rounded-full px-4 py-3 text-sm font-medium uppercase ${isReviewsActive ? "bg-primary text-primary-foreground" : "text-foreground"}`}
+                  className={`flex min-h-[100px] flex-col rounded-xl p-4 text-left transition-all ${isReviewsActive ? "bg-primary text-primary-foreground" : "bg-primary/10 hover:bg-primary/15"}`}
                 >
-                  Reviews
+                  <div className="flex items-start justify-between gap-2">
+                    <span className={`text-sm font-semibold uppercase tracking-wider ${isReviewsActive ? "text-primary-foreground" : "text-card-foreground"}`}>Reviews</span>
+                    <ArrowUpRight className={`h-4 w-4 shrink-0 ${isReviewsActive ? "text-primary-foreground/80" : "text-card-foreground/70"}`} />
+                  </div>
+                  <p className={`mt-1 text-[11px] ${isReviewsActive ? "text-primary-foreground/80" : "text-muted-foreground"}`}>Testimonials</p>
                 </Link>
+              ) : (
+                <div className="min-h-[100px] rounded-xl p-4" aria-hidden />
               )}
+              <div className="col-span-2 border-t border-dotted border-primary/30 py-3" aria-hidden />
               <a
                 href="/account"
                 onClick={() => setMobileMenuOpen(false)}
-                className={`rounded-full px-4 py-3 text-sm font-medium uppercase ${location.pathname === "/account" ? "bg-primary text-primary-foreground" : "text-foreground"}`}
+                className={`col-span-2 flex min-h-[52px] items-center justify-between rounded-xl px-4 py-3 text-sm font-semibold uppercase tracking-wider ${location.pathname === "/account" ? "bg-primary text-primary-foreground" : "bg-primary/10 text-card-foreground hover:bg-primary/15"}`}
               >
-                Account
+                <span>Account</span>
+                <ArrowUpRight className="h-4 w-4 shrink-0" />
               </a>
             </div>
           </SheetContent>

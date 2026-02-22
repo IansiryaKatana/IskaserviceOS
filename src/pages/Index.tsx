@@ -801,35 +801,54 @@ const Index = () => {
               <Menu className="h-5 w-5" />
         </button>
           </SheetTrigger>
-          <SheetContent side="right" className="bg-card border-border">
-            <div className="mt-6 flex flex-col gap-2">
+          <SheetContent side="right" className="border-border bg-card">
+            <div className="mt-6 grid grid-cols-2 gap-3 px-1">
               <button
                 onClick={() => { setPanelOpen(true); setStep("service"); setMobileMenuOpen(false); }}
-                className="rounded-full bg-primary px-4 py-3 text-left text-sm font-semibold uppercase tracking-wider text-primary-foreground"
+                className="flex min-h-[100px] flex-col rounded-xl bg-primary/10 p-4 text-left transition-all hover:bg-primary/15"
               >
-                Services
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm font-semibold uppercase tracking-wider text-card-foreground">Services</span>
+                  <ArrowUpRight className="h-4 w-4 shrink-0 text-card-foreground/70" />
+                </div>
+                <p className="mt-1 text-[11px] text-muted-foreground">Book a service</p>
               </button>
-              {tenant?.slug && (
+              {tenant?.slug ? (
                 <Link
                   to={`/t/${tenant.slug}/reviews`}
                   onClick={() => setMobileMenuOpen(false)}
-                  className={`rounded-full px-4 py-3 text-sm font-medium uppercase ${location.pathname === `/t/${tenant.slug}/reviews` ? "bg-primary text-primary-foreground" : "text-foreground"}`}
+                  className={`flex min-h-[100px] flex-col rounded-xl p-4 text-left transition-all ${location.pathname === `/t/${tenant.slug}/reviews` ? "bg-primary text-primary-foreground" : "bg-primary/10 hover:bg-primary/15"}`}
                 >
-                  Reviews
+                  <div className="flex items-start justify-between gap-2">
+                    <span className={`text-sm font-semibold uppercase tracking-wider ${location.pathname === `/t/${tenant.slug}/reviews` ? "text-primary-foreground" : "text-card-foreground"}`}>Reviews</span>
+                    <ArrowUpRight className={`h-4 w-4 shrink-0 ${location.pathname === `/t/${tenant.slug}/reviews` ? "text-primary-foreground/80" : "text-card-foreground/70"}`} />
+                  </div>
+                  <p className={`mt-1 text-[11px] ${location.pathname === `/t/${tenant.slug}/reviews` ? "text-primary-foreground/80" : "text-muted-foreground"}`}>Testimonials</p>
                 </Link>
+              ) : (
+                <div className="min-h-[100px] rounded-xl p-4" aria-hidden />
               )}
+              <div className="col-span-2 border-t border-dotted border-primary/30 py-3" aria-hidden />
               <a
                 href="/account"
                 onClick={() => setMobileMenuOpen(false)}
-                className={`rounded-full px-4 py-3 text-sm font-medium uppercase ${location.pathname === "/account" ? "bg-primary text-primary-foreground" : "text-foreground"}`}
+                className={`flex min-h-[100px] flex-col rounded-xl p-4 text-left transition-all ${location.pathname === "/account" ? "bg-primary text-primary-foreground" : "bg-primary/10 hover:bg-primary/15"}`}
               >
-                Account
+                <div className="flex items-start justify-between gap-2">
+                  <span className={`text-sm font-semibold uppercase tracking-wider ${location.pathname === "/account" ? "text-primary-foreground" : "text-card-foreground"}`}>Account</span>
+                  <ArrowUpRight className={`h-4 w-4 shrink-0 ${location.pathname === "/account" ? "text-primary-foreground/80" : "text-card-foreground/70"}`} />
+                </div>
+                <p className={`mt-1 text-[11px] ${location.pathname === "/account" ? "text-primary-foreground/80" : "text-muted-foreground"}`}>Your bookings</p>
               </a>
               <button
                 onClick={() => { setPanelOpen(true); setStep("location"); setMobileMenuOpen(false); }}
-                className="rounded-full bg-primary px-4 py-3 text-left text-sm font-semibold uppercase tracking-wider text-primary-foreground"
+                className="flex min-h-[100px] flex-col rounded-xl bg-primary p-4 text-left transition-all text-primary-foreground hover:opacity-95"
               >
-                Book appointment
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm font-semibold uppercase tracking-wider">Book appointment</span>
+                  <ArrowUpRight className="h-4 w-4 shrink-0 text-primary-foreground/90" />
+                </div>
+                <p className="mt-1 text-[11px] text-primary-foreground/80">Get started</p>
               </button>
             </div>
           </SheetContent>
