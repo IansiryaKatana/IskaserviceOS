@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useParams } from "react-router-dom";
 import { useTenant } from "@/hooks/use-tenant";
+import { TenantPageSkeleton } from "@/components/TenantPageSkeleton";
 import Index from "./Index";
 
 /**
@@ -18,11 +19,7 @@ const TenantPage = () => {
   }, [slug, setTenantBySlug]);
 
   if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background font-body text-sm text-muted-foreground">
-        Loading...
-      </div>
-    );
+    return <TenantPageSkeleton />;
   }
 
   if (!tenant) {

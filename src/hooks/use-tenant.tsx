@@ -37,6 +37,8 @@ interface TenantCtx {
   setTenantBySlug: (slug: string) => Promise<void>;
   /** Refetch current tenant (e.g. after updating branding in Admin). */
   refreshTenant: () => Promise<void>;
+  /** Called by router-aware child to keep tenant in sync with URL (e.g. /t/:slug vs /admin). */
+  setPathname: (pathname: string) => void;
 }
 
 // Default tenant ID for backward compat
@@ -46,11 +48,15 @@ const TenantContext = createContext<TenantCtx | undefined>(undefined);
 
 const getMainDomain = () => (import.meta.env.VITE_APP_MAIN_DOMAIN ?? "").toString().trim();
 
+/** Initial pathname so refresh on /t/:slug uses correct tenant before router mounts. */
+const getInitialPathname = () => (typeof window !== "undefined" ? window.location.pathname : "");
+
 export function TenantProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [loading, setLoading] = useState(true);
   const [tenantLoadedByDomain, setTenantLoadedByDomain] = useState(false);
+  const [pathname, setPathname] = useState(getInitialPathname);
 
   const loadTenant = useCallback(async (id: string) => {
     try {
@@ -110,9 +116,19 @@ export function TenantProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // On custom domain: resolve tenant by host and set tenantLoadedByDomain. Otherwise load user's tenant or default.
+  // When URL is /t/:slug, always use that slug so booking page and refresh stay on the same tenant.
+  // Otherwise: custom domain → resolve by host; no user → default; user → user's tenant (e.g. for /admin).
   useEffect(() => {
     if (typeof window === "undefined") return;
+    const currentPath = pathname || getInitialPathname();
+    const slugMatch = currentPath.match(/^\/t\/([^/]+)/);
+    if (slugMatch) {
+      const slug = slugMatch[1];
+      setLoading(true);
+      setTenantBySlug(slug).finally(() => setLoading(false));
+      return;
+    }
+
     const host = window.location.hostname;
     const main = getMainDomain();
     const isCustomDomain =
@@ -153,7 +169,7 @@ export function TenantProvider({ children }: { children: ReactNode }) {
       loadTenant(DEFAULT_TENANT_ID);
     };
     loadUserTenant();
-  }, [user?.id, loadTenant, setTenantBySlug]);
+  }, [pathname, user?.id, loadTenant, setTenantBySlug]);
 
   const refreshTenant = useCallback(async () => {
     if (tenant?.id) await loadTenant(tenant.id);
@@ -168,6 +184,7 @@ export function TenantProvider({ children }: { children: ReactNode }) {
         tenantLoadedByDomain,
         setTenantBySlug,
         refreshTenant,
+        setPathname,
       }}
     >
       {children}

@@ -109,6 +109,15 @@ const Home = () => {
           >
             Reviews
           </Link>
+          <Link 
+            to="/docs" 
+            className={`rounded-full px-4 py-2 transition-colors ${
+              location.pathname === "/docs" ? "text-white" : "text-white hover:text-primary"
+            }`}
+            style={location.pathname === "/docs" ? { backgroundColor: '#d16e17' } : {}}
+          >
+            Documentation
+          </Link>
           <a href="/login" className="rounded-full bg-white px-4 py-2 text-black transition-colors hover:bg-white/90">
             Sign In
           </a>
@@ -144,6 +153,13 @@ const Home = () => {
                 className={`rounded-full px-4 py-3 text-sm font-medium uppercase ${location.pathname === "/reviews" ? "bg-primary text-primary-foreground" : "text-foreground"}`}
               >
                 Reviews
+              </Link>
+              <Link
+                to="/docs"
+                onClick={() => setMobileMenuOpen(false)}
+                className={`rounded-full px-4 py-3 text-sm font-medium uppercase ${location.pathname === "/docs" ? "bg-primary text-primary-foreground" : "text-foreground"}`}
+              >
+                Documentation
               </Link>
               <a
                 href="/login"

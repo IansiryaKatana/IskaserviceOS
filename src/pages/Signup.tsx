@@ -4,12 +4,25 @@ import { supabase } from "@/integrations/supabase/client";
 import { useFeedback } from "@/hooks/use-feedback";
 import { Link } from "react-router-dom";
 
-const Signup = () => {
+export interface SignupProps {
+  /** When true, render only the form (no full-page layout, no free trial). On success call onSuccess(). */
+  embedded?: boolean;
+  initialEmail?: string;
+  redirectTo?: string;
+  onSuccess?: () => void;
+  onBack?: () => void;
+  /** When embedded, show "Already have an account? Sign in" and call this to switch to login in same panel. */
+  onSwitchToLogin?: () => void;
+}
+
+const Signup = (props: SignupProps) => {
   const navigate = useNavigate();
   const { showSuccess, showError } = useFeedback();
   const [searchParams] = useSearchParams();
   const plan = searchParams.get("plan");
-  const isFreeTrial = plan === "free";
+  const isFreeTrial = plan === "free" && !props.embedded;
+  const redirectTo = props.redirectTo ?? searchParams.get("redirect") ?? "/admin";
+  const emailParam = props.initialEmail ?? searchParams.get("email") ?? "";
 
   const [authUser, setAuthUser] = useState<{ id: string } | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -23,7 +36,7 @@ const Signup = () => {
   const user = authUser;
   const [form, setForm] = useState({
     name: "",
-    email: "",
+    email: emailParam,
     password: "",
     businessName: "",
     businessSlug: "",
@@ -31,7 +44,11 @@ const Signup = () => {
   });
   const [submitting, setSubmitting] = useState(false);
 
-  if (loading) {
+  useEffect(() => {
+    if (emailParam) setForm((f) => ({ ...f, email: emailParam }));
+  }, [emailParam]);
+
+  if (loading && !props.embedded) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background font-body text-sm text-muted-foreground">
         Loading...
@@ -39,9 +56,14 @@ const Signup = () => {
     );
   }
 
-  if (user && !isFreeTrial) {
-    return <>{navigate("/admin", { replace: true })}</>;
+  useEffect(() => {
+    if (user && !isFreeTrial && props.embedded) props.onSuccess?.();
+  }, [user, isFreeTrial, props.embedded, props.onSuccess]);
+
+  if (user && !isFreeTrial && !props.embedded) {
+    return <>{navigate(redirectTo, { replace: true })}</>;
   }
+  if (user && !isFreeTrial && props.embedded) return null;
 
   const slugFromName = (name: string) =>
     name
@@ -87,7 +109,12 @@ const Signup = () => {
         navigate(`/onboarding?tenant_id=${tenantId}`, { replace: true });
       } else {
         showSuccess("Check your email to confirm your account");
-        navigate("/login", { replace: true });
+        if (props.embedded) {
+          props.onSuccess?.();
+          return;
+        }
+        const loginUrl = redirectTo ? `/login?redirect=${encodeURIComponent(redirectTo)}${form.email ? `&email=${encodeURIComponent(form.email)}` : ""}` : "/login";
+        navigate(loginUrl, { replace: true });
       }
     } catch (err: any) {
       showError(err.message || "Sign up failed");
@@ -96,19 +123,13 @@ const Signup = () => {
     }
   };
 
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-hero px-4 font-body">
-      <div className="w-full max-w-sm">
-        <div className="mb-8 text-center">
-          <img src="/iska systems logos.png" alt="Iska Service OS" className="mx-auto h-10" />
-          <p className="mt-2 text-xs text-hero-muted">
-            {isFreeTrial ? "Start your 15-day free trial" : "Create your account"}
-          </p>
-        </div>
-        <form onSubmit={handleSubmit} className="space-y-3 rounded-2xl bg-card p-6 shadow-2xl">
-          <h2 className="font-display text-base font-bold text-card-foreground">
-            {isFreeTrial ? "Create Account & Start Free Trial" : "Sign Up"}
-          </h2>
+  const formContent = (
+    <form onSubmit={handleSubmit} className="space-y-3 rounded-xl bg-card p-4 shadow-sm sm:p-5">
+      {!props.embedded && (
+        <h2 className="font-display text-base font-bold text-card-foreground">
+          {isFreeTrial ? "Create Account & Start Free Trial" : "Sign Up"}
+        </h2>
+      )}
           <input
             type="text"
             placeholder="Your name"
@@ -173,20 +194,46 @@ const Signup = () => {
               </select>
             </>
           )}
-          <button
-            type="submit"
-            disabled={submitting}
-            className="w-full rounded-full bg-primary py-2.5 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-[1.02] disabled:opacity-50 sm:text-sm"
-          >
-            {submitting ? "Please wait..." : isFreeTrial ? "Start Free Trial" : "Create Account"}
-          </button>
-          <Link
-            to="/login"
-            className="block w-full text-center text-[11px] text-muted-foreground hover:text-foreground"
-          >
-            Already have an account? Sign in
-          </Link>
-        </form>
+      <button
+        type="submit"
+        disabled={submitting}
+        className="w-full rounded-full bg-primary py-2.5 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-[1.02] disabled:opacity-50 sm:text-sm"
+      >
+        {submitting ? "Please wait..." : isFreeTrial ? "Start Free Trial" : "Create Account"}
+      </button>
+      {props.embedded && props.onSwitchToLogin ? (
+        <button
+          type="button"
+          onClick={props.onSwitchToLogin}
+          className="block w-full text-center text-[11px] text-muted-foreground hover:text-foreground"
+        >
+          Already have an account? Sign in
+        </button>
+      ) : (
+        <Link
+          to={redirectTo ? `/login?redirect=${encodeURIComponent(redirectTo)}${form.email ? `&email=${encodeURIComponent(form.email)}` : ""}` : "/login"}
+          className="block w-full text-center text-[11px] text-muted-foreground hover:text-foreground"
+        >
+          Already have an account? Sign in
+        </Link>
+      )}
+    </form>
+  );
+
+  if (props.embedded) {
+    return <div className="w-full max-w-sm">{formContent}</div>;
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-hero px-4 font-body">
+      <div className="w-full max-w-sm">
+        <div className="mb-8 text-center">
+          <img src="/iska systems logos.png" alt="Iska Service OS" className="mx-auto h-10" />
+          <p className="mt-2 text-xs text-hero-muted">
+            {isFreeTrial ? "Start your 15-day free trial" : redirectTo === "/account" ? "Create an account to see all your bookings" : "Create your account"}
+          </p>
+        </div>
+        <div className="rounded-2xl shadow-2xl">{formContent}</div>
       </div>
     </div>
   );

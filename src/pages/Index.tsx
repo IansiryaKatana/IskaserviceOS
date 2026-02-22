@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import {
   useServices,
@@ -26,6 +26,9 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TypingText } from "@/components/TypingText";
 import { useFeedback } from "@/hooks/use-feedback";
+import { CancelBookingContent } from "@/components/CancelBookingContent";
+import Login from "@/pages/Login";
+import Signup from "@/pages/Signup";
 
 // Email validation
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -287,6 +290,8 @@ const Index = () => {
     totalPrice: number;
     cancelToken?: string | null;
     recurringCount?: number;
+    tenantSlug?: string;
+    customerEmail?: string | null;
   } | null>(null);
   const [fieldErrors, setFieldErrors] = useState<{ name?: string; email?: string; phone?: string; form?: string }>({});
   const [stripeClientSecret, setStripeClientSecret] = useState<string | null>(null);
@@ -301,6 +306,15 @@ const Index = () => {
   const [mpesaPushLoading, setMpesaPushLoading] = useState(false);
   const [repeatOption, setRepeatOption] = useState<"none" | "weekly">("none");
   const [repeatCount, setRepeatCount] = useState(4);
+  /** When set, confirmation panel shows cancel / login / signup flow instead of summary (same dialog). */
+  const [confirmationPanelView, setConfirmationPanelView] = useState<null | "cancel" | "login" | "signup">(null);
+  const navigate = useNavigate();
+  /** True when we landed from Stripe return and are creating the booking (show skeleton in panel, no full flow). */
+  const [stripeReturnProcessing, setStripeReturnProcessing] = useState(() => {
+    if (typeof window === "undefined") return false;
+    const p = new URLSearchParams(window.location.search);
+    return p.get("payment") === "stripe" && p.get("redirect_status") === "succeeded";
+  });
 
   // After Stripe redirect: create booking from saved context and clean URL (once)
   const stripeReturnHandled = useRef(false);
@@ -311,8 +325,12 @@ const Index = () => {
     const redirectStatus = params.get("redirect_status");
     if (payment !== "stripe" || redirectStatus !== "succeeded" || stripeReturnHandled.current) return;
     const raw = sessionStorage.getItem(STRIPE_BOOKING_PENDING_KEY);
-    if (!raw) return;
+    if (!raw) {
+      setStripeReturnProcessing(false);
+      return;
+    }
     stripeReturnHandled.current = true;
+    setStripeReturnProcessing(true);
     try {
       const payload = JSON.parse(raw) as {
         service_id: string;
@@ -352,6 +370,7 @@ const Index = () => {
         const cancelUrl = cancelToken && tenantSlug
           ? `${typeof window !== "undefined" ? window.location.origin : ""}/t/${tenantSlug}/cancel?token=${cancelToken}`
           : undefined;
+        setStripeReturnProcessing(false);
         setShowConfirmation(true);
         setConfirmationSummary({
           serviceName: payload.service_name ?? "Service",
@@ -362,6 +381,7 @@ const Index = () => {
           totalPrice: payload.total_price,
           cancelToken: cancelToken ?? undefined,
           tenantSlug: payload.tenant_slug ?? undefined,
+          customerEmail: payload.customer_email ?? undefined,
         });
         sessionStorage.removeItem(STRIPE_BOOKING_PENDING_KEY);
         if (payload.customer_email && "service_name" in payload && "tenant_name" in payload) {
@@ -389,11 +409,13 @@ const Index = () => {
         const clean = params.toString() ? `?${params.toString()}` : window.location.pathname;
         window.history.replaceState(null, "", clean);
       }).catch((err: unknown) => {
+        setStripeReturnProcessing(false);
         showError("Booking failed", err instanceof Error ? err.message : "Could not create booking");
         sessionStorage.removeItem(STRIPE_BOOKING_PENDING_KEY);
         stripeReturnHandled.current = false;
       });
     } catch {
+      setStripeReturnProcessing(false);
       sessionStorage.removeItem(STRIPE_BOOKING_PENDING_KEY);
       stripeReturnHandled.current = false;
     }
@@ -503,6 +525,7 @@ const Index = () => {
     setFieldErrors({});
     setShowConfirmation(false);
     setConfirmationSummary(null);
+    setConfirmationPanelView(null);
     setMpesaPending(false);
     setMpesaCheckoutRequestId(null);
     setMpesaChecking(false);
@@ -589,6 +612,7 @@ const Index = () => {
         bookingTime: selectedTime,
         totalPrice: selectedService.price,
         recurringCount: isRecurring ? repeatCount : undefined,
+        customerEmail: email || null,
       });
       setShowConfirmation(true);
 
@@ -667,6 +691,7 @@ const Index = () => {
         totalPrice: selectedService.price,
         cancelToken: (created as { cancel_token?: string | null })?.cancel_token ?? null,
         recurringCount: isRecurring ? repeatCount : undefined,
+        customerEmail: email || null,
       });
       setShowConfirmation(true);
       if (email) {
@@ -836,43 +861,102 @@ const Index = () => {
         </div>
       </main>
 
-      {/* Dialog: triggered by Book appointment button */}
-      <Dialog open={panelOpen} onOpenChange={setPanelOpen}>
+      {/* Dialog: triggered by Book appointment button; also open when processing Stripe return */}
+      <Dialog open={panelOpen || stripeReturnProcessing} onOpenChange={(open) => !stripeReturnProcessing && setPanelOpen(open)}>
         <DialogContent hideOverlay closeButtonClassName="absolute right-4 top-4 sm:right-5 rounded-lg bg-muted p-1.5 hover:bg-muted/80 data-[state=open]:!bg-muted" className="booking-dialog animate-none left-auto right-6 top-20 bottom-6 z-[100] flex w-full max-w-[calc(28rem-60px)] translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-l-xl border-0 border-l bg-card p-0 shadow-2xl sm:right-10 sm:top-24 sm:bottom-8 sm:max-w-[calc(32rem-60px)] md:top-32 md:bottom-10 lg:right-12 lg:top-36 lg:bottom-12">
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-            {/* Panel header: location step = title left; other steps = back left, title centered */}
-            {step === "location" ? (
-              <div className="flex min-w-0 shrink-0 items-center justify-between overflow-hidden p-4 sm:p-5">
-              <div className="flex items-center gap-2">
-                  <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
-                    {STEP_LABELS[step]}
+            {/* Panel header: dynamic title; Back on left when cancel/login/signup or step > 0 */}
+            {(() => {
+              const showBack = stripeReturnProcessing ? false : (showConfirmation && confirmationPanelView != null) || (!showConfirmation && stepIdx > 0);
+              const backHandler = showConfirmation && confirmationPanelView != null
+                ? () => setConfirmationPanelView(null)
+                : goBack;
+              const panelTitle = stripeReturnProcessing
+                ? "Confirming booking…"
+                : showConfirmation && confirmationPanelView === "cancel"
+                  ? "Cancel or reschedule"
+                  : showConfirmation && confirmationPanelView === "login"
+                    ? "Sign in"
+                    : showConfirmation && confirmationPanelView === "signup"
+                      ? "Sign up"
+                      : showConfirmation
+                        ? "Booking confirmed"
+                        : STEP_LABELS[step];
+              return (
+                <div className="flex min-w-0 shrink-0 items-center gap-2 overflow-hidden p-4 sm:p-5">
+                  {showBack && (
+                    <button onClick={backHandler} className="shrink-0 rounded-lg bg-muted p-1.5 text-muted-foreground hover:bg-muted/80 hover:text-card-foreground" aria-label="Back">
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+                  )}
+                  <h3 className="min-w-0 flex-1 font-display text-base font-bold text-card-foreground sm:text-lg truncate">
+                    {panelTitle}
                   </h3>
+                  {showBack && <div className="w-8 shrink-0 sm:w-10" aria-hidden />}
                 </div>
-              </div>
-            ) : (
-              <div className="relative flex min-w-0 shrink-0 items-center justify-between overflow-hidden p-4 sm:p-5">
-                <div className="flex w-10 shrink-0 items-center sm:w-12">
-                  {!showConfirmation && stepIdx > 0 && (
-                    <button onClick={goBack} className="rounded-lg bg-muted p-1.5 text-muted-foreground hover:bg-muted/80 hover:text-card-foreground">
-                    <ChevronLeft className="h-4 w-4" />
-                  </button>
-                )}
-                </div>
-                {!showConfirmation && (
-                  <div className="absolute left-0 right-0 flex justify-center pointer-events-none">
-                <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
-                  {STEP_LABELS[step]}
-                </h3>
-              </div>
-                )}
-                <div className="w-10 shrink-0 sm:w-12" aria-hidden />
-            </div>
-            )}
+              );
+            })()}
 
             {/* Panel content - uniform padding matching left */}
             <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 sm:p-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none]" style={{ scrollbarGutter: "stable" }}>
-              {/* Confirmation view (inside same dialog) */}
-              {showConfirmation && (selectedService || confirmationSummary) ? (
+              {/* Stripe return: show skeleton in panel until booking is created (no full flow flash) */}
+              {stripeReturnProcessing ? (
+                <div className="animate-fade-in space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 shrink-0 animate-pulse rounded-full bg-muted" />
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <div className="h-4 w-20 animate-pulse rounded bg-muted" />
+                      <div className="h-3 w-28 animate-pulse rounded bg-muted" />
+                    </div>
+                  </div>
+                  <div className="space-y-2 rounded-xl border border-border bg-secondary/30 p-3 sm:p-4">
+                    {[1, 2, 3, 4, 5, 6].map((i) => (
+                      <div key={i} className="flex justify-between gap-2">
+                        <div className="h-3 w-16 shrink-0 animate-pulse rounded bg-muted" />
+                        <div className="h-3 flex-1 max-w-[60%] animate-pulse rounded bg-muted" />
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex justify-center py-2">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  </div>
+                  <p className="text-center text-xs text-muted-foreground">Confirming your booking…</p>
+                </div>
+              ) : showConfirmation && (selectedService || confirmationSummary) ? (
+                confirmationPanelView === "cancel" && confirmationSummary?.cancelToken ? (
+                  <div className="animate-fade-in">
+                    <CancelBookingContent
+                      token={confirmationSummary.cancelToken}
+                      embedded
+                      onBack={() => setConfirmationPanelView(null)}
+                      onCancelled={() => setConfirmationPanelView(null)}
+                    />
+                  </div>
+                ) : confirmationPanelView === "login" ? (
+                  <div className="animate-fade-in">
+                    <Login
+                      embedded
+                      initialEmail={confirmationSummary?.customerEmail ?? bookingForm.email?.trim() ?? undefined}
+                      redirectTo="/account"
+                      onBack={() => setConfirmationPanelView(null)}
+                      onSuccess={(to) => {
+                        setConfirmationPanelView(null);
+                        navigate(to);
+                      }}
+                    />
+                  </div>
+                ) : confirmationPanelView === "signup" ? (
+                  <div className="animate-fade-in">
+                    <Signup
+                      embedded
+                      initialEmail={confirmationSummary?.customerEmail ?? bookingForm.email?.trim() ?? undefined}
+                      redirectTo="/account"
+                      onBack={() => setConfirmationPanelView(null)}
+                      onSuccess={() => setConfirmationPanelView(null)}
+                      onSwitchToLogin={() => setConfirmationPanelView("login")}
+                    />
+                  </div>
+                ) : (
                 <div className="animate-fade-in space-y-4">
                   <div className="flex items-center gap-3">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary">
@@ -897,21 +981,43 @@ const Index = () => {
                     </p>
                   )}
                   {confirmationSummary?.cancelToken && (tenant?.slug ?? confirmationSummary?.tenantSlug) && (
-                    <p className="text-[11px] text-muted-foreground text-center">
-                      Need to cancel or reschedule?{" "}
-                      <a
-                        href={`/t/${tenant?.slug ?? confirmationSummary?.tenantSlug}/cancel?token=${confirmationSummary.cancelToken}`}
-                        className="text-primary underline hover:no-underline"
+                    <div className="rounded-xl border border-primary/20 bg-primary/10 p-3 text-xs sm:p-4 sm:text-sm">
+                      <p className="font-semibold text-card-foreground">Need to cancel or reschedule?</p>
+                      <p className="mt-1 text-[11px] text-muted-foreground sm:text-xs">Use the button below (we also sent a link to your email).</p>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmationPanelView("cancel")}
+                        className="mt-2 inline-block rounded-lg bg-primary px-3 py-2 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 sm:text-xs"
                       >
-                        Use this link
-                      </a>
-                      {" "}(we also sent it to your email).
-                    </p>
+                        Cancel or reschedule this booking
+                      </button>
+                    </div>
                   )}
+                  <div className="rounded-xl border border-primary/30 bg-primary/15 p-3 text-xs sm:p-4 sm:text-sm">
+                    <p className="font-semibold text-card-foreground">Create an account to see all your bookings in one place.</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground sm:text-xs">Sign up or sign in to view and manage your appointments anytime.</p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setConfirmationPanelView("signup")}
+                        className="inline-flex items-center justify-center rounded-lg bg-primary px-3 py-2 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 sm:text-xs"
+                      >
+                        Sign up
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmationPanelView("login")}
+                        className="inline-flex items-center justify-center rounded-lg border border-primary/40 bg-background px-3 py-2 text-[11px] font-medium text-foreground hover:bg-primary/10 sm:text-xs"
+                      >
+                        Sign in
+                      </button>
+                    </div>
+                  </div>
                   <button onClick={clearSelection} className="w-full rounded-full bg-primary px-6 py-3 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-[1.02] sm:text-sm">
                     Done
                   </button>
                 </div>
+                )
               ) : (
               <>
               {/* STEP 1: Location */}
@@ -1387,6 +1493,7 @@ const Index = () => {
                                 totalPrice: selectedService!.price,
                                 cancelToken: cancelToken ?? undefined,
                                 tenantSlug: tenant?.slug ?? undefined,
+                                customerEmail: email || null,
                               });
                               setShowConfirmation(true);
                               if (email) {
