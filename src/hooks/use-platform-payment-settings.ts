@@ -74,12 +74,13 @@ export function usePlatformPaymentSettings() {
   return { data, update, isUpdating: upsert.isPending };
 }
 
-/** Public hook for Pricing/checkout: only reads provider and payment links (no secrets). */
+/** Public hook for Pricing/checkout: only reads provider, payment links, and Stripe publishable key (for embedded card). */
 export function usePublicPaymentOptions() {
   const { data: settings } = useSiteSettings(null);
   const legacyUrl = getSetting(settings, KEYS.paypalPaymentUrl);
   return {
     provider: (getSetting(settings, KEYS.provider) || "") as PaymentProvider,
+    stripePublishableKey: getSetting(settings, KEYS.stripePublishable),
     stripePaymentLinkStarter: getSetting(settings, KEYS.stripeLinkStarter),
     stripePaymentLinkLifetime: getSetting(settings, KEYS.stripeLinkLifetime) || getSetting(settings, KEYS.stripeLinkPro),
     paypalPaymentUrlStarter: getSetting(settings, KEYS.paypalUrlStarter) || legacyUrl,

@@ -1,6 +1,8 @@
-import { Link, useNavigate, useLocation } from "react-router-dom";
-import { Check, X, CreditCard, Menu } from "lucide-react";
-import { useState } from "react";
+import { Link, useNavigate, useLocation, useSearchParams } from "react-router-dom";
+import { Check, X, CreditCard, Menu, Loader2 } from "lucide-react";
+import { useState, useMemo } from "react";
+import { loadStripe } from "@stripe/stripe-js";
+import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useCreateTenantRequest } from "@/hooks/use-tenant-requests";
 import { usePublicPaymentOptions } from "@/hooks/use-platform-payment-settings";
@@ -83,9 +85,67 @@ const PLANS = [
   },
 ];
 
+function PlanPaymentForm({
+  amount,
+  paymentIntentId,
+  plan,
+  onCancel,
+}: {
+  amount: number;
+  paymentIntentId: string;
+  plan: string;
+  onCancel: () => void;
+}) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const navigate = useNavigate();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!stripe || !elements) return;
+    setLoading(true);
+    setError(null);
+    const { error: err } = await stripe.confirmPayment({
+      elements,
+      confirmParams: {
+        return_url: `${window.location.origin}/onboarding?plan=${plan}&session_id=${paymentIntentId}`,
+        payment_method_data: {
+          billing_details: { name: window.location.hostname },
+        },
+      },
+    });
+    setLoading(false);
+    if (err) {
+      setError(err.message ?? "Payment failed");
+      return;
+    }
+    navigate(`/onboarding?plan=${plan}&session_id=${paymentIntentId}`);
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <p className="text-[11px] font-medium text-muted-foreground">Card details</p>
+      <PaymentElement />
+      {error && <p className="text-xs text-destructive">{error}</p>}
+      <div className="flex gap-2">
+        <button type="button" onClick={onCancel} className="rounded-lg border border-border px-4 py-2 text-xs font-medium hover:bg-secondary">
+          Back
+        </button>
+        <button type="submit" disabled={!stripe || loading} className="flex-1 rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50">
+          {loading ? "Processing…" : `Pay $${amount.toFixed(0)}`}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 const Pricing = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const expired = searchParams.get("expired") === "1";
   const { showSuccess, showError } = useFeedback();
   const [showRequestDialog, setShowRequestDialog] = useState(false);
   const [showEnterpriseDialog, setShowEnterpriseDialog] = useState(false);
@@ -110,17 +170,37 @@ const Pricing = () => {
     timeline: "",
     message: "",
   });
+  const [paymentStep, setPaymentStep] = useState<"form" | "card">("form");
+  const [stripeClientSecret, setStripeClientSecret] = useState<string | null>(null);
+  const [stripePaymentIntentId, setStripePaymentIntentId] = useState<string | null>(null);
+  const [stripePaymentLoading, setStripePaymentLoading] = useState(false);
+  const [showCallbackForm, setShowCallbackForm] = useState(false);
   const createRequest = useCreateTenantRequest();
   const paymentOptions = usePublicPaymentOptions();
+  const stripePromise = useMemo(
+    () => (paymentOptions.stripePublishableKey ? loadStripe(paymentOptions.stripePublishableKey) : null),
+    [paymentOptions.stripePublishableKey]
+  );
+
+  const closePaymentDialog = () => {
+    setShowRequestDialog(false);
+    setSelectedPlan(null);
+    setPaymentStep("form");
+    setStripeClientSecret(null);
+    setStripePaymentIntentId(null);
+    setShowCallbackForm(false);
+  };
 
   const handlePlanClick = (planId: string) => {
     setSelectedPlan(planId);
     if (planId === "enterprise") {
       setShowEnterpriseDialog(true);
     } else if (planId === PLAN_FREE) {
-      // Free trial: go to signup with redirect to onboarding
       navigate("/signup?plan=free");
     } else {
+      setPaymentStep("form");
+      setStripeClientSecret(null);
+      setShowCallbackForm(false);
       setShowRequestDialog(true);
     }
   };
@@ -238,6 +318,11 @@ const Pricing = () => {
       </header>
 
       <main className="mx-auto max-w-7xl px-4 py-12 sm:px-6 sm:py-16">
+        {expired && (
+          <div className="mb-6 rounded-xl border border-amber-500/50 bg-amber-500/10 px-4 py-3 text-center text-sm text-amber-800 dark:text-amber-200">
+            Your trial has ended. Upgrade below to get back your access and keep your data.
+          </div>
+        )}
         <div className="text-center mb-12">
           <h1 className="font-display text-4xl font-bold text-foreground sm:text-5xl lg:text-6xl mb-4">
             Simple, Transparent Pricing
@@ -294,111 +379,42 @@ const Pricing = () => {
 
       </main>
 
-      {/* Payment / Request Dialog for Starter and Lifetime */}
-      {showRequestDialog && selectedPlan && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4 backdrop-blur-sm">
-          <div className="animate-slide-in-right w-full max-w-md rounded-2xl bg-card p-5 shadow-2xl sm:p-6 max-h-[90vh] overflow-y-auto">
+      {/* Payment / Request Dialog for Starter and Lifetime — single flow: pay with card in-dialog or request callback */}
+      {showRequestDialog && selectedPlan && (selectedPlan === PLAN_STARTER || selectedPlan === PLAN_LIFETIME) && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-foreground/40 p-0 sm:p-4 backdrop-blur-sm">
+          <div className="animate-slide-in-right w-full max-w-md rounded-t-2xl sm:rounded-2xl bg-card p-5 shadow-2xl sm:p-6 max-h-[90vh] overflow-y-auto">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
                 Get Started with {selectedPlan === PLAN_STARTER ? "Starter" : "Lifetime"}
               </h3>
-              <button
-                onClick={() => {
-                  setShowRequestDialog(false);
-                  setSelectedPlan(null);
-                }}
-                className="text-muted-foreground hover:text-card-foreground"
-              >
+              <button onClick={closePaymentDialog} className="rounded-lg p-1 text-muted-foreground hover:text-card-foreground" aria-label="Close">
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <p className="mb-4 text-xs text-muted-foreground">
-              Pay now with card or PayPal, or submit the form to request a callback.
-            </p>
-            {(selectedPlan === PLAN_STARTER || selectedPlan === PLAN_LIFETIME) && !paymentOptions.provider && (
-              <p className="mb-4 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                Configure Stripe or PayPal in Platform → Payments to accept payments here.
-              </p>
-            )}
-            {(selectedPlan === PLAN_STARTER || selectedPlan === PLAN_LIFETIME) && (paymentOptions.provider === "stripe" || paymentOptions.provider === "both") && getStripeLink(selectedPlan) && (
-              <div className="mb-4 flex flex-wrap gap-2">
-                <a
-                  href={getStripeLink(selectedPlan)!}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-primary-foreground hover:scale-[1.02] transition-transform"
-                >
-                  <CreditCard className="h-4 w-4" /> Pay with Card (Stripe)
-                </a>
-              </div>
-            )}
-            {(selectedPlan === PLAN_STARTER || selectedPlan === PLAN_LIFETIME) && (paymentOptions.provider === "paypal" || paymentOptions.provider === "both") && (paymentOptions.paypalClientId || getPayPalUrl(selectedPlan)) && (
-              <div className="mb-4">
-                {getPayPalUrl(selectedPlan) ? (
-                  <a
-                    href={getPayPalUrl(selectedPlan)!}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-foreground hover:bg-secondary transition-colors"
-                  >
-                    Pay with PayPal
-                  </a>
-                ) : (
-                  <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
-                    Add your <strong>PayPal payment URL for {selectedPlan}</strong> in Platform → Payments.
-                  </p>
-                )}
-              </div>
-            )}
-            <p className="mb-2 text-[11px] font-medium text-muted-foreground">Or request a callback</p>
+
+            {showCallbackForm ? (
+              <>
+                <p className="mb-4 text-xs text-muted-foreground">We&apos;ll contact you to complete your plan setup.</p>
             <div className="space-y-3">
               <div>
                 <label className="text-[11px] font-medium text-muted-foreground">Name *</label>
-                <input
-                  type="text"
-                  value={requestForm.name}
-                  onChange={(e) => setRequestForm(f => ({ ...f, name: e.target.value }))}
-                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm"
-                  placeholder="Your name"
-                />
+                    <input type="text" value={requestForm.name} onChange={(e) => setRequestForm((f) => ({ ...f, name: e.target.value }))} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm" placeholder="Your name" />
               </div>
               <div>
                 <label className="text-[11px] font-medium text-muted-foreground">Email *</label>
-                <input
-                  type="email"
-                  value={requestForm.email}
-                  onChange={(e) => setRequestForm(f => ({ ...f, email: e.target.value }))}
-                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm"
-                  placeholder="your@email.com"
-                />
+                    <input type="email" value={requestForm.email} onChange={(e) => setRequestForm((f) => ({ ...f, email: e.target.value }))} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm" placeholder="your@email.com" />
               </div>
               <div>
                 <label className="text-[11px] font-medium text-muted-foreground">Phone</label>
-                <input
-                  type="tel"
-                  value={requestForm.phone}
-                  onChange={(e) => setRequestForm(f => ({ ...f, phone: e.target.value }))}
-                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm"
-                  placeholder="+1 (555) 000-0000"
-                />
+                    <input type="tel" value={requestForm.phone} onChange={(e) => setRequestForm((f) => ({ ...f, phone: e.target.value }))} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm" placeholder="+1 (555) 000-0000" />
               </div>
               <div>
                 <label className="text-[11px] font-medium text-muted-foreground">Company</label>
-                <input
-                  type="text"
-                  value={requestForm.company}
-                  onChange={(e) => setRequestForm(f => ({ ...f, company: e.target.value }))}
-                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm"
-                  placeholder="Company name"
-                />
+                    <input type="text" value={requestForm.company} onChange={(e) => setRequestForm((f) => ({ ...f, company: e.target.value }))} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm" placeholder="Company name" />
               </div>
               <div>
                 <label className="text-[11px] font-medium text-muted-foreground">Business Type</label>
-                <select
-                  value={requestForm.business_type}
-                  onChange={(e) => setRequestForm(f => ({ ...f, business_type: e.target.value }))}
-                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm"
-                >
+                    <select value={requestForm.business_type} onChange={(e) => setRequestForm((f) => ({ ...f, business_type: e.target.value }))} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm">
                   <option value="">Select...</option>
                   <option value="salon">Salon / Barbershop</option>
                   <option value="spa">Spa / Wellness</option>
@@ -410,22 +426,108 @@ const Pricing = () => {
               </div>
               <div>
                 <label className="text-[11px] font-medium text-muted-foreground">Message</label>
-                <textarea
-                  value={requestForm.message}
-                  onChange={(e) => setRequestForm(f => ({ ...f, message: e.target.value }))}
-                  rows={3}
-                  className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm"
-                  placeholder="Tell us about your business needs..."
+                    <textarea value={requestForm.message} onChange={(e) => setRequestForm((f) => ({ ...f, message: e.target.value }))} rows={3} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm" placeholder="Tell us about your business needs..." />
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setShowCallbackForm(false)} className="rounded-lg border border-border px-4 py-2 text-xs font-medium hover:bg-secondary">Back</button>
+                    <button onClick={handleSubmitRequest} disabled={createRequest.isPending} className="flex-1 rounded-full bg-primary py-2.5 text-xs font-semibold uppercase tracking-wider text-primary-foreground hover:scale-[1.02] transition-transform disabled:opacity-50 sm:text-sm">
+                      {createRequest.isPending ? "Submitting..." : `Request ${selectedPlan} Plan`}
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : paymentStep === "card" && stripeClientSecret && stripePaymentIntentId && stripePromise ? (
+              <Elements stripe={stripePromise} options={{ clientSecret: stripeClientSecret, appearance: { theme: "stripe" } }}>
+                <PlanPaymentForm
+                  amount={selectedPlan === PLAN_LIFETIME ? 500 : 45}
+                  paymentIntentId={stripePaymentIntentId}
+                  plan={selectedPlan}
+                  onCancel={() => {
+                    setPaymentStep("form");
+                    setStripeClientSecret(null);
+                    setStripePaymentIntentId(null);
+                  }}
                 />
+              </Elements>
+            ) : (
+              <>
+                <p className="mb-4 text-xs text-muted-foreground">Enter your details and pay with card in this dialog. After payment you&apos;ll be redirected to complete your business setup.</p>
+                {(selectedPlan === PLAN_STARTER || selectedPlan === PLAN_LIFETIME) && !paymentOptions.provider && (
+                  <p className="mb-4 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">Configure Stripe in Platform → Payments to accept card payments here.</p>
+                )}
+                <div className="space-y-3 mb-4">
+                  <div>
+                    <label className="text-[11px] font-medium text-muted-foreground">Name *</label>
+                    <input type="text" value={requestForm.name} onChange={(e) => setRequestForm((f) => ({ ...f, name: e.target.value }))} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm" placeholder="Your name" />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-medium text-muted-foreground">Email *</label>
+                    <input type="email" value={requestForm.email} onChange={(e) => setRequestForm((f) => ({ ...f, email: e.target.value }))} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm" placeholder="your@email.com" />
+                  </div>
               </div>
+                {(paymentOptions.provider === "stripe" || paymentOptions.provider === "both") && paymentOptions.stripePublishableKey && (
               <button
-                onClick={handleSubmitRequest}
-                disabled={createRequest.isPending}
-                className="w-full rounded-full bg-primary py-2.5 text-xs font-semibold uppercase tracking-wider text-primary-foreground hover:scale-[1.02] transition-transform disabled:opacity-50 sm:text-sm"
-              >
-                {createRequest.isPending ? "Submitting..." : `Request ${selectedPlan} Plan`}
+                    type="button"
+                    disabled={stripePaymentLoading}
+                    onClick={async () => {
+                      const name = requestForm.name?.trim() ?? "";
+                      const email = requestForm.email?.trim() ?? "";
+                      if (!name || !email) {
+                        showError("Required", "Name and email are required to continue");
+                        return;
+                      }
+                      const plan = selectedPlan === PLAN_LIFETIME ? "lifetime" : "starter";
+                      setStripePaymentLoading(true);
+                      try {
+                        const url = import.meta.env.VITE_SUPABASE_URL;
+                        const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+                        if (!url || !anonKey) {
+                          showError("Config", "App URL or Supabase key not configured");
+                          return;
+                        }
+                        const res = await fetch(`${url}/functions/v1/create-stripe-payment-intent`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json", Authorization: `Bearer ${anonKey}` },
+                          body: JSON.stringify({ plan, customer_email: email, currency: "usd" }),
+                        });
+                        const data = (await res.json().catch(() => ({}))) as { error?: string; clientSecret?: string; paymentIntentId?: string };
+                        if (!res.ok) {
+                          showError("Payment", data?.error ?? `Request failed (${res.status})`);
+                          return;
+                        }
+                        const secret = data?.clientSecret;
+                        const piId = data?.paymentIntentId;
+                        if (secret && piId) {
+                          setStripeClientSecret(secret);
+                          setStripePaymentIntentId(piId);
+                          setPaymentStep("card");
+                        } else {
+                          showError("Payment", data?.error ?? "Invalid response from server");
+                        }
+                      } finally {
+                        setStripePaymentLoading(false);
+                      }
+                    }}
+                    className="mb-3 flex w-full items-center justify-center gap-2 rounded-full bg-primary py-2.5 text-xs font-semibold uppercase tracking-wider text-primary-foreground hover:scale-[1.02] transition-transform disabled:opacity-50 sm:text-sm"
+                  >
+                    {stripePaymentLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
+                    {stripePaymentLoading ? "Loading…" : `Pay $${selectedPlan === PLAN_LIFETIME ? "500" : "45"} with Card`}
               </button>
+                )}
+                {(paymentOptions.provider === "paypal" || paymentOptions.provider === "both") && getPayPalUrl(selectedPlan) && (
+                  <div className="mb-3">
+                    <a href={getPayPalUrl(selectedPlan)!} target="_blank" rel="noopener noreferrer" className="inline-flex w-full justify-center gap-2 rounded-full border border-border bg-background px-4 py-2.5 text-xs font-semibold uppercase tracking-wider text-foreground hover:bg-secondary">
+                      Pay with PayPal
+                    </a>
             </div>
+                )}
+                <p className="text-center">
+                  <button type="button" onClick={() => setShowCallbackForm(true)} className="text-[11px] font-medium text-muted-foreground underline hover:text-foreground">
+                    Request callback instead
+                  </button>
+                </p>
+              </>
+            )}
           </div>
         </div>
       )}

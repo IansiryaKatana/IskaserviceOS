@@ -20,7 +20,7 @@ import { useTenantPaymentSettings } from "@/hooks/use-tenant-payment-settings";
 import { PayPalScriptProvider, PayPalButtons } from "@paypal/react-paypal-js";
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
-import { X, Clock, ArrowUpRight, ChevronRight, ChevronLeft, MapPin, User, Check, Star, CreditCard, Menu, Smartphone, Loader2 } from "lucide-react";
+import { X, Clock, ArrowUpRight, ChevronRight, ChevronLeft, MapPin, User, Check, Star, CreditCard, Menu, Smartphone, Loader2, Repeat } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -161,6 +161,30 @@ function generateSlots(start: string, end: string, durationMin: number): string[
   return slots;
 }
 
+function timeToMinutes(t: string): number {
+  const [h, m] = t.slice(0, 5).split(":").map(Number);
+  return (h ?? 0) * 60 + (m ?? 0);
+}
+
+/** Check if a slot is blocked by any booking when considering buffer after each booking. */
+function isSlotBlockedByBookings(
+  slotTime: string,
+  slotDurationMin: number,
+  bookings: { booking_time: string; status: string; services?: { duration_minutes: number; buffer_minutes?: number } | null }[]
+): boolean {
+  const slotStart = timeToMinutes(slotTime);
+  const slotEnd = slotStart + slotDurationMin;
+  for (const b of bookings) {
+    if (b.status === "cancelled") continue;
+    const dur = b.services?.duration_minutes ?? 30;
+    const buf = b.services?.buffer_minutes ?? 0;
+    const rangeStart = timeToMinutes(b.booking_time);
+    const rangeEnd = rangeStart + dur + buf;
+    if (slotStart < rangeEnd && slotEnd > rangeStart) return true;
+  }
+  return false;
+}
+
 function formatTime12(t: string) {
   const [h, m] = t.split(":").map(Number);
   const ampm = h >= 12 ? "PM" : "AM";
@@ -261,6 +285,8 @@ const Index = () => {
     bookingDate: string;
     bookingTime: string;
     totalPrice: number;
+    cancelToken?: string | null;
+    recurringCount?: number;
   } | null>(null);
   const [fieldErrors, setFieldErrors] = useState<{ name?: string; email?: string; phone?: string; form?: string }>({});
   const [stripeClientSecret, setStripeClientSecret] = useState<string | null>(null);
@@ -273,6 +299,8 @@ const Index = () => {
   const [mpesaChecking, setMpesaChecking] = useState(false);
   const [stripePaymentLoading, setStripePaymentLoading] = useState(false);
   const [mpesaPushLoading, setMpesaPushLoading] = useState(false);
+  const [repeatOption, setRepeatOption] = useState<"none" | "weekly">("none");
+  const [repeatCount, setRepeatCount] = useState(4);
 
   // After Stripe redirect: create booking from saved context and clean URL (once)
   const stripeReturnHandled = useRef(false);
@@ -301,6 +329,7 @@ const Index = () => {
         staff_name?: string;
         location_name?: string;
         tenant_name?: string;
+        tenant_slug?: string;
       };
       createBooking.mutateAsync({
         service_id: payload.service_id,
@@ -317,7 +346,12 @@ const Index = () => {
         notes: null,
         user_id: null,
         metadata: null,
-      }).then(() => {
+      }).then((created) => {
+        const cancelToken = (created as { cancel_token?: string | null })?.cancel_token ?? null;
+        const tenantSlug = payload.tenant_slug ?? "";
+        const cancelUrl = cancelToken && tenantSlug
+          ? `${typeof window !== "undefined" ? window.location.origin : ""}/t/${tenantSlug}/cancel?token=${cancelToken}`
+          : undefined;
         setShowConfirmation(true);
         setConfirmationSummary({
           serviceName: payload.service_name ?? "Service",
@@ -326,6 +360,8 @@ const Index = () => {
           bookingDate: payload.booking_date,
           bookingTime: payload.booking_time,
           totalPrice: payload.total_price,
+          cancelToken: cancelToken ?? undefined,
+          tenantSlug: payload.tenant_slug ?? undefined,
         });
         sessionStorage.removeItem(STRIPE_BOOKING_PENDING_KEY);
         if (payload.customer_email && "service_name" in payload && "tenant_name" in payload) {
@@ -340,6 +376,7 @@ const Index = () => {
                 staff_name: (payload as { staff_name?: string }).staff_name,
                 location_name: (payload as { location_name?: string }).location_name,
                 total_price: payload.total_price,
+                cancel_url: cancelUrl,
               },
               tenant: { name: (payload as { tenant_name?: string }).tenant_name },
             },
@@ -389,14 +426,14 @@ const Index = () => {
     const dow = dateObj.getDay();
     if (anyProfessional) {
       const slotToStaffIds = new Map<string, string[]>();
+      const durationMin = selectedService.duration_minutes;
       for (const staff of filteredStaff) {
         const schedule = schedules.find((s: { staff_id: string; day_of_week: number; is_available: boolean }) => s.staff_id === staff.id && s.day_of_week === dow && s.is_available);
         if (!schedule) continue;
-        const staffBookings = existingBookings?.filter((b) => b.staff_id === staff.id && b.status !== "cancelled") ?? [];
-        const bookedTimes = new Set(staffBookings.map((b) => b.booking_time.slice(0, 5)));
-        const slots = generateSlots(schedule.start_time, schedule.end_time, selectedService.duration_minutes);
+        const staffBookings = existingBookings?.filter((b) => b.staff_id === staff.id) ?? [];
+        const slots = generateSlots(schedule.start_time, schedule.end_time, durationMin);
         for (const slot of slots) {
-          if (!bookedTimes.has(slot)) {
+          if (!isSlotBlockedByBookings(slot, durationMin, staffBookings)) {
             const list = slotToStaffIds.get(slot) ?? [];
             list.push(staff.id);
             slotToStaffIds.set(slot, list);
@@ -408,9 +445,13 @@ const Index = () => {
     if (!selectedStaff) return [];
     const schedule = schedules.find((s: { staff_id?: string; day_of_week: number; is_available: boolean }) => s.day_of_week === dow && s.is_available);
     if (!schedule) return [];
-    const allSlots = generateSlots(schedule.start_time, schedule.end_time, selectedService.duration_minutes);
-    const bookedTimes = new Set(existingBookings?.filter(b => b.status !== "cancelled").map((b) => b.booking_time.slice(0, 5)) || []);
-    return allSlots.map((slot) => ({ time: slot, booked: bookedTimes.has(slot) }));
+    const durationMin = selectedService.duration_minutes;
+    const allSlots = generateSlots(schedule.start_time, schedule.end_time, durationMin);
+    const bookingsForStaff = existingBookings ?? [];
+    return allSlots.map((slot) => ({
+      time: slot,
+      booked: isSlotBlockedByBookings(slot, durationMin, bookingsForStaff),
+    }));
   }, [selectedDate, selectedStaff, selectedService, schedules, existingBookings, anyProfessional, filteredStaff]);
 
   // Auto-select first available staff when anyProfessional + date + time chosen
@@ -468,6 +509,15 @@ const Index = () => {
     setStripePaymentLoading(false);
     setMpesaPushLoading(false);
     setStep("location");
+    setRepeatOption("none");
+    setRepeatCount(4);
+  };
+
+  /** Add days to YYYY-MM-DD and return YYYY-MM-DD */
+  const addDays = (dateStr: string, days: number) => {
+    const d = new Date(dateStr + "T12:00:00");
+    d.setDate(d.getDate() + days);
+    return d.toISOString().slice(0, 10);
   };
 
   const handleBooking = async () => {
@@ -495,26 +545,54 @@ const Index = () => {
     const fullPhone = phoneRaw
       ? `${phoneCountryCode}${phoneDigitsOnly(phoneRaw)}`
       : null;
+    const isRecurring = repeatOption === "weekly" && repeatCount >= 2;
     try {
-      await createBooking.mutateAsync({
+      const basePayload = {
         service_id: selectedService.id,
         staff_id: staff.id,
         location_id: selectedLocation.id,
         customer_name: name,
         customer_email: email || null,
         customer_phone: fullPhone,
-        booking_date: selectedDate,
         booking_time: selectedTime,
-        status: "pending",
+        status: "pending" as const,
         total_price: selectedService.price,
         notes: null,
         user_id: null,
         tenant_id: tenantId,
         metadata: null,
+      };
+      const first = await createBooking.mutateAsync({
+        ...basePayload,
+        booking_date: selectedDate,
+        is_recurring: isRecurring,
+        recurrence_rule: isRecurring ? "WEEKLY" : null,
+        parent_booking_id: null,
+      });
+      const firstId = (first as { id?: string })?.id;
+      if (isRecurring && firstId && repeatCount > 1) {
+        for (let i = 1; i < repeatCount; i++) {
+          await createBooking.mutateAsync({
+            ...basePayload,
+            booking_date: addDays(selectedDate, i * 7),
+            is_recurring: false,
+            recurrence_rule: null,
+            parent_booking_id: firstId,
+          });
+        }
+      }
+      setConfirmationSummary({
+        serviceName: selectedService.name,
+        staffName: staff.name,
+        locationName: selectedLocation.name,
+        bookingDate: selectedDate,
+        bookingTime: selectedTime,
+        totalPrice: selectedService.price,
+        recurringCount: isRecurring ? repeatCount : undefined,
       });
       setShowConfirmation(true);
 
-      // Send confirmation email (fire-and-forget)
+      // Send confirmation email for first booking (fire-and-forget)
       if (email) {
         supabase.functions.invoke("send-booking-confirmation", {
           body: {
@@ -544,25 +622,58 @@ const Index = () => {
     const phoneRaw = bookingForm.phone?.trim() ?? "";
     const fullPhone = phoneRaw ? `${phoneCountryCode}${phoneDigitsOnly(phoneRaw)}` : null;
     const customerName = bookingForm.name?.trim() ?? "";
+    const isRecurring = repeatOption === "weekly" && repeatCount >= 2;
     try {
-      await createBooking.mutateAsync({
+      const basePayload = {
         service_id: selectedService.id,
         staff_id: staff.id,
         location_id: selectedLocation.id,
         customer_name: customerName,
         customer_email: email || null,
         customer_phone: fullPhone,
-        booking_date: selectedDate,
         booking_time: selectedTime,
-        status: "confirmed",
+        status: "confirmed" as const,
         total_price: selectedService.price,
         notes: null,
         user_id: null,
         tenant_id: tenantId,
         metadata: null,
+      };
+      const created = await createBooking.mutateAsync({
+        ...basePayload,
+        booking_date: selectedDate,
+        is_recurring: isRecurring,
+        recurrence_rule: isRecurring ? "WEEKLY" : null,
+        parent_booking_id: null,
+      });
+      const firstId = (created as { id?: string })?.id;
+      if (isRecurring && firstId && repeatCount > 1) {
+        for (let i = 1; i < repeatCount; i++) {
+          await createBooking.mutateAsync({
+            ...basePayload,
+            booking_date: addDays(selectedDate, i * 7),
+            is_recurring: false,
+            recurrence_rule: null,
+            parent_booking_id: firstId,
+          });
+        }
+      }
+      setConfirmationSummary({
+        serviceName: selectedService.name,
+        staffName: staff.name,
+        locationName: selectedLocation.name,
+        bookingDate: selectedDate,
+        bookingTime: selectedTime,
+        totalPrice: selectedService.price,
+        cancelToken: (created as { cancel_token?: string | null })?.cancel_token ?? null,
+        recurringCount: isRecurring ? repeatCount : undefined,
       });
       setShowConfirmation(true);
       if (email) {
+        const cancelToken = (created as { cancel_token?: string | null })?.cancel_token;
+        const cancelUrl = cancelToken && tenant?.slug
+          ? `${typeof window !== "undefined" ? window.location.origin : ""}/t/${tenant.slug}/cancel?token=${cancelToken}`
+          : undefined;
         supabase.functions.invoke("send-booking-confirmation", {
           body: {
             booking: {
@@ -574,6 +685,7 @@ const Index = () => {
               staff_name: staff.name,
               location_name: selectedLocation.name,
               total_price: selectedService.price,
+              cancel_url: cancelUrl,
             },
             tenant: { name: tenant?.name },
           },
@@ -656,13 +768,13 @@ const Index = () => {
         </nav>
         <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
           <SheetTrigger asChild>
-            <button
+        <button
               type="button"
               className="rounded-full bg-white/10 p-2.5 text-white backdrop-blur-md md:hidden"
               aria-label="Open menu"
-            >
+        >
               <Menu className="h-5 w-5" />
-            </button>
+        </button>
           </SheetTrigger>
           <SheetContent side="right" className="bg-card border-border">
             <div className="mt-6 flex flex-col gap-2">
@@ -731,7 +843,7 @@ const Index = () => {
             {/* Panel header: location step = title left; other steps = back left, title centered */}
             {step === "location" ? (
               <div className="flex min-w-0 shrink-0 items-center justify-between overflow-hidden p-4 sm:p-5">
-                <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2">
                   <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
                     {STEP_LABELS[step]}
                   </h3>
@@ -742,19 +854,19 @@ const Index = () => {
                 <div className="flex w-10 shrink-0 items-center sm:w-12">
                   {!showConfirmation && stepIdx > 0 && (
                     <button onClick={goBack} className="rounded-lg bg-muted p-1.5 text-muted-foreground hover:bg-muted/80 hover:text-card-foreground">
-                      <ChevronLeft className="h-4 w-4" />
-                    </button>
-                  )}
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                )}
                 </div>
                 {!showConfirmation && (
                   <div className="absolute left-0 right-0 flex justify-center pointer-events-none">
-                    <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
-                      {STEP_LABELS[step]}
-                    </h3>
-                  </div>
+                <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
+                  {STEP_LABELS[step]}
+                </h3>
+              </div>
                 )}
                 <div className="w-10 shrink-0 sm:w-12" aria-hidden />
-              </div>
+            </div>
             )}
 
             {/* Panel content - uniform padding matching left */}
@@ -765,7 +877,7 @@ const Index = () => {
                   <div className="flex items-center gap-3">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary">
                       <Check className="h-5 w-5 text-primary-foreground" />
-                    </div>
+            </div>
                     <div>
                       <p className="text-sm font-bold text-card-foreground sm:text-base">Booking confirmed!</p>
                       <p className="text-[11px] text-muted-foreground">We&apos;ll see you soon</p>
@@ -779,6 +891,23 @@ const Index = () => {
                     <div className="flex justify-between"><span className="text-muted-foreground">Time</span><span className="font-medium">{confirmationSummary?.bookingTime ? formatTime12(confirmationSummary.bookingTime) : (selectedTime && formatTime12(selectedTime))}</span></div>
                     <div className="flex justify-between border-t border-border pt-2"><span className="font-bold">Total</span><span className="font-bold">${Number(confirmationSummary?.totalPrice ?? selectedService?.price ?? 0).toFixed(0)}</span></div>
                   </div>
+                  {confirmationSummary?.recurringCount && confirmationSummary.recurringCount > 1 && (
+                    <p className="text-xs text-muted-foreground text-center rounded-lg bg-primary/10 py-2 px-3">
+                      You have <span className="font-semibold text-foreground">{confirmationSummary.recurringCount}</span> upcoming weekly appointments at the same time.
+                    </p>
+                  )}
+                  {confirmationSummary?.cancelToken && (tenant?.slug ?? confirmationSummary?.tenantSlug) && (
+                    <p className="text-[11px] text-muted-foreground text-center">
+                      Need to cancel or reschedule?{" "}
+                      <a
+                        href={`/t/${tenant?.slug ?? confirmationSummary?.tenantSlug}/cancel?token=${confirmationSummary.cancelToken}`}
+                        className="text-primary underline hover:no-underline"
+                      >
+                        Use this link
+                      </a>
+                      {" "}(we also sent it to your email).
+                    </p>
+                  )}
                   <button onClick={clearSelection} className="w-full rounded-full bg-primary px-6 py-3 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-[1.02] sm:text-sm">
                     Done
                   </button>
@@ -1088,20 +1217,20 @@ const Index = () => {
                   {/* Contact form */}
                   <div className="space-y-2">
                     <div>
-                      <input
-                        type="text"
-                        placeholder="Your name *"
-                        value={bookingForm.name}
+                    <input
+                      type="text"
+                      placeholder="Your name *"
+                      value={bookingForm.name}
                         onChange={(e) => { setBookingForm((f) => ({ ...f, name: e.target.value })); setFieldErrors((e) => ({ ...e, name: undefined })); }}
                         className={`w-full rounded-lg border bg-background px-3 py-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 sm:text-sm ${fieldErrors.name ? "border-destructive" : "border-border focus:ring-primary"}`}
-                      />
+                    />
                       {fieldErrors.name && <p className="mt-1 text-[10px] text-destructive">{fieldErrors.name}</p>}
                     </div>
                     <div>
-                      <input
-                        type="email"
-                        placeholder="Email"
-                        value={bookingForm.email}
+                    <input
+                      type="email"
+                      placeholder="Email"
+                      value={bookingForm.email}
                         onChange={(e) => { setBookingForm((f) => ({ ...f, email: e.target.value })); setFieldErrors((e) => ({ ...e, email: undefined })); }}
                         className={`w-full rounded-lg border bg-background px-3 py-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 sm:text-sm ${fieldErrors.email ? "border-destructive" : "border-border focus:ring-primary"}`}
                       />
@@ -1123,12 +1252,12 @@ const Index = () => {
                           ))}
                         </SelectContent>
                       </Select>
-                      <input
-                        type="tel"
+                    <input
+                      type="tel"
                         inputMode="numeric"
                         pattern="[0-9]*"
                         placeholder="Phone (digits only)"
-                        value={bookingForm.phone}
+                      value={bookingForm.phone}
                         onChange={(e) => {
                           const v = e.target.value.replace(/\D/g, "").slice(0, PHONE_DIGITS_MAX);
                           setBookingForm((f) => ({ ...f, phone: v }));
@@ -1141,6 +1270,37 @@ const Index = () => {
                       <p className="text-[10px] text-destructive">
                         {fieldErrors.phone || `Enter ${PHONE_DIGITS_MIN}–${PHONE_DIGITS_MAX} digits`}
                       </p>
+                    )}
+                  </div>
+
+                  {/* Repeat weekly */}
+                  <div className="mt-4 rounded-xl border border-border bg-secondary/20 p-3 sm:p-4">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="repeat_weekly"
+                        checked={repeatOption === "weekly"}
+                        onChange={(e) => setRepeatOption(e.target.checked ? "weekly" : "none")}
+                        className="h-4 w-4 rounded border-border text-primary accent-primary"
+                      />
+                      <label htmlFor="repeat_weekly" className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-card-foreground sm:text-sm">
+                        <Repeat className="h-3.5 w-3.5 text-muted-foreground" />
+                        Repeat weekly
+                      </label>
+                    </div>
+                    {repeatOption === "weekly" && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className="text-[11px] text-muted-foreground">Number of appointments:</span>
+                        <select
+                          value={repeatCount}
+                          onChange={(e) => setRepeatCount(Number(e.target.value))}
+                          className="rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                        >
+                          {[2, 3, 4, 5, 6, 8, 10, 12].map((n) => (
+                            <option key={n} value={n}>{n}</option>
+                          ))}
+                        </select>
+                      </div>
                     )}
                   </div>
 
@@ -1198,7 +1358,7 @@ const Index = () => {
                             const fullPhone = phoneRaw ? `${phoneCountryCode}${phoneDigitsOnly(phoneRaw)}` : null;
                             try {
                               const customerName = bookingForm.name?.trim() ?? "";
-                              await createBooking.mutateAsync({
+                              const created = await createBooking.mutateAsync({
                                 service_id: selectedService!.id,
                                 staff_id: staff!.id,
                                 location_id: selectedLocation!.id,
@@ -1214,6 +1374,20 @@ const Index = () => {
                                 tenant_id: tenantId,
                                 metadata: null,
                               });
+                              const cancelToken = (created as { cancel_token?: string | null })?.cancel_token ?? null;
+                              const cancelUrl = cancelToken && tenant?.slug
+                                ? `${typeof window !== "undefined" ? window.location.origin : ""}/t/${tenant.slug}/cancel?token=${cancelToken}`
+                                : undefined;
+                              setConfirmationSummary({
+                                serviceName: selectedService!.name,
+                                staffName: staff!.name,
+                                locationName: selectedLocation!.name,
+                                bookingDate: selectedDate,
+                                bookingTime: selectedTime,
+                                totalPrice: selectedService!.price,
+                                cancelToken: cancelToken ?? undefined,
+                                tenantSlug: tenant?.slug ?? undefined,
+                              });
                               setShowConfirmation(true);
                               if (email) {
                                 supabase.functions.invoke("send-booking-confirmation", {
@@ -1227,6 +1401,7 @@ const Index = () => {
                                       staff_name: staff?.name,
                                       location_name: selectedLocation?.name,
                                       total_price: selectedService?.price,
+                                      cancel_url: cancelUrl,
                                     },
                                     tenant: { name: tenant?.name },
                                   },
@@ -1272,6 +1447,7 @@ const Index = () => {
                                   staff_name: staff.name,
                                   location_name: selectedLocation.name,
                                   tenant_name: tenant?.name ?? "",
+                                  tenant_slug: tenant?.slug ?? "",
                                 };
                                 sessionStorage.setItem(STRIPE_BOOKING_PENDING_KEY, JSON.stringify(payload));
                               }}
@@ -1420,20 +1596,20 @@ const Index = () => {
                       </div>
                     )}
                     {tenantPayment.payAtVenueEnabled && (
-                      <button
-                        onClick={handleBooking}
+                  <button
+                    onClick={handleBooking}
                         disabled={createBooking.isPending || !bookingForm.name?.trim()}
                         className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-all duration-200 hover:scale-[1.02] hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:scale-100 disabled:hover:brightness-100 sm:text-sm"
-                      >
+                  >
                         {createBooking.isPending ? (
                           <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
                         ) : (
-                          <Check className="h-4 w-4" />
+                    <Check className="h-4 w-4" />
                         )}
                         {createBooking.isPending ? "Booking…" : "Request booking (pay at venue)"}
-                      </button>
+                  </button>
                     )}
-                      </div>
+                </div>
                     ) : tenantPayment.payAtVenueEnabled ? (
                       <>
                         <p className="mb-3 text-xs text-muted-foreground">
@@ -1456,9 +1632,9 @@ const Index = () => {
                       <p className="text-xs text-muted-foreground">
                         No payment options are available for this business. Please contact them to book.
                       </p>
-                    )}
-                  </div>
-                </div>
+              )}
+            </div>
+          </div>
               )}
               </>
               )}
@@ -1474,17 +1650,17 @@ const Index = () => {
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Location</span>
                       <span className="font-medium text-card-foreground">{selectedLocation?.name ?? "—"}</span>
-                    </div>
+              </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Service</span>
                       <span className="font-medium text-card-foreground">{selectedService?.name ?? "—"}</span>
-                    </div>
+              </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Specialist</span>
                       <span className="font-medium text-card-foreground">
                         {anyProfessional ? "Any available" : selectedStaff?.name ?? "—"}
                       </span>
-                    </div>
+            </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Date & Time</span>
                       <span className="font-medium text-card-foreground">
@@ -1492,7 +1668,7 @@ const Index = () => {
                           ? `${new Date(selectedDate + "T00:00:00").toLocaleDateString("en", { weekday: "short", month: "short", day: "numeric" })} at ${formatTime12(selectedTime)}`
                           : "—"}
                       </span>
-                    </div>
+            </div>
                     <div className="flex justify-between border-t border-border pt-1.5">
                       <span className="font-bold text-card-foreground">Total</span>
                       <span className="font-bold text-card-foreground">
@@ -1501,7 +1677,7 @@ const Index = () => {
                     </div>
                   </div>
                 </div>
-                <button
+            <button
                   onClick={goNext}
                   disabled={
                     (step === "location" && !selectedLocation) ||
@@ -1512,9 +1688,9 @@ const Index = () => {
                   className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-xs font-semibold uppercase tracking-wider text-primary-foreground transition-transform hover:scale-[1.02] disabled:opacity-50 sm:text-sm"
                 >
                   Next <ChevronRight className="h-4 w-4" />
-                </button>
-              </div>
-            )}
+            </button>
+        </div>
+      )}
           </div>
         </DialogContent>
       </Dialog>

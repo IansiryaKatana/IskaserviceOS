@@ -48,6 +48,7 @@ import {
   Search,
   Image as ImageIcon,
   Upload,
+  Inbox,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
@@ -61,8 +62,13 @@ import type { Json } from "@/integrations/supabase/types";
 import { useSiteSettings, useUpsertSiteSetting } from "@/hooks/use-site-settings";
 import { useTenantPaymentSettingsForm } from "@/hooks/use-tenant-payment-settings";
 import { usePlatformPaymentSettings, type PaymentProvider } from "@/hooks/use-platform-payment-settings";
+import { useTenantRequestsList, useUpdateTenantRequest, type TenantRequest } from "@/hooks/use-tenant-requests";
+import { useAuditLogs } from "@/hooks/use-audit-logs";
+import { usePlatformAnalytics } from "@/hooks/use-analytics";
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid } from "recharts";
 
-type Tab = "overview" | "tenants" | "admins" | "subscriptions" | "deployments" | "roles" | "payments" | "media";
+type Tab = "overview" | "tenants" | "requests" | "admins" | "subscriptions" | "deployments" | "roles" | "payments" | "media";
 
 const BUSINESS_TYPES = [
   { value: "salon", label: "Salon / Barbershop" },
@@ -566,6 +572,8 @@ const TenantPaymentEditor = ({ tenantId }: { tenantId: string }) => {
     mpesaConsumerKey,
     mpesaShortcode,
     payAtVenueEnabled,
+    cancelByHours,
+    noShowAfterMinutes,
     save,
     isSaving,
   } = useTenantPaymentSettingsForm(tenantId);
@@ -578,6 +586,8 @@ const TenantPaymentEditor = ({ tenantId }: { tenantId: string }) => {
   const [mpesaShort, setMpesaShort] = useState("");
   const [mpesaPass, setMpesaPass] = useState("");
   const [payAtVenue, setPayAtVenue] = useState(true);
+  const [cancelHours, setCancelHours] = useState(24);
+  const [noShowMins, setNoShowMins] = useState(15);
   const { showSuccess, showError } = useFeedback();
 
   useEffect(() => {
@@ -593,6 +603,10 @@ const TenantPaymentEditor = ({ tenantId }: { tenantId: string }) => {
   useEffect(() => {
     setPayAtVenue(payAtVenueEnabled);
   }, [payAtVenueEnabled]);
+  useEffect(() => {
+    setCancelHours(cancelByHours);
+    setNoShowMins(noShowAfterMinutes);
+  }, [cancelByHours, noShowAfterMinutes]);
 
   const handleSave = async () => {
     try {
@@ -681,6 +695,20 @@ const TenantPaymentEditor = ({ tenantId }: { tenantId: string }) => {
         </label>
       </div>
 
+      <div className={sectionCls}>
+        <h4 className="text-sm font-semibold text-card-foreground">Cancellation & no-show</h4>
+        <div>
+          <label className={labelCls}>Cancel by (hours before)</label>
+          <input type="number" min={0} value={cancelHours} onChange={(e) => setCancelHours(Number(e.target.value) || 0)} className={inputCls} />
+          <p className="mt-1 text-[10px] text-muted-foreground">Minimum hours before appointment that customer can cancel.</p>
+        </div>
+        <div>
+          <label className={labelCls}>No-show after (minutes)</label>
+          <input type="number" min={0} value={noShowMins} onChange={(e) => setNoShowMins(Number(e.target.value) || 0)} className={inputCls} />
+          <p className="mt-1 text-[10px] text-muted-foreground">Mark as no-show if customer doesn’t show within this many minutes after start.</p>
+        </div>
+      </div>
+
       <button
         type="button"
         onClick={handleSave}
@@ -708,6 +736,8 @@ const Platform = () => {
   const { data: tenants, isLoading: loadingTenants } = useTenants();
   const { data: stats } = usePlatformStats();
   const { data: subscriptions } = useTenantSubscriptions();
+  const [platformAnalyticsPeriod, setPlatformAnalyticsPeriod] = useState<"day" | "week" | "month">("month");
+  const { data: platformAnalytics, isLoading: loadingPlatformAnalytics } = usePlatformAnalytics(platformAnalyticsPeriod);
   const createTenant = useCreateTenant();
   const updateTenant = useUpdateTenant();
   const deleteTenant = useDeleteTenant();
@@ -818,6 +848,15 @@ const Platform = () => {
       });
     }
   }, [tab, paymentSettings.provider, paymentSettings.stripePublishableKey, paymentSettings.stripePaymentLinkStarter, paymentSettings.stripePaymentLinkLifetime, paymentSettings.paypalClientId, paymentSettings.paypalPaymentUrlStarter, paymentSettings.paypalPaymentUrlLifetime]);
+
+  // Tenant requests (lead/demo requests from public form)
+  const [requestStatusFilter, setRequestStatusFilter] = useState<TenantRequest["status"] | "">("");
+  const { data: tenantRequests, isLoading: loadingRequests } = useTenantRequestsList(requestStatusFilter);
+  const { data: auditLogs } = useAuditLogs(null, 10);
+  const updateTenantRequest = useUpdateTenantRequest();
+  const [editingRequest, setEditingRequest] = useState<TenantRequest | null>(null);
+  const [requestNotes, setRequestNotes] = useState("");
+  const [convertingFromRequest, setConvertingFromRequest] = useState<TenantRequest | null>(null);
 
   const openNew = () => {
     setEditing(null);
@@ -1112,6 +1151,11 @@ const Platform = () => {
             supabase_anon_key: deploymentForm.supabase_anon_key,
           });
         }
+        // Link tenant request when converting from Requests tab
+        if (convertingFromRequest) {
+          await updateTenantRequest.mutateAsync({ id: convertingFromRequest.id, tenant_id: newTenant.id, status: "converted" });
+          setConvertingFromRequest(null);
+        }
         toast.success("Tenant created");
       }
       setShowForm(false);
@@ -1127,6 +1171,8 @@ const Platform = () => {
 
   const statCards = [
     { label: "Tenants", value: stats?.totalTenants ?? "—", icon: <Building2 className="h-5 w-5" />, color: "bg-primary/10 text-primary" },
+    { label: "Paying (Starter + Lifetime)", value: stats?.activePayingTenants ?? "—", icon: <CreditCard className="h-5 w-5" />, color: "bg-primary/10 text-primary" },
+    { label: "MRR", value: stats?.mrr != null ? `$${stats.mrr}` : "—", icon: <CreditCard className="h-5 w-5" />, color: "bg-accent/10 text-accent-foreground" },
     { label: "Bookings", value: stats?.totalBookings ?? "—", icon: <Calendar className="h-5 w-5" />, color: "bg-accent/10 text-accent-foreground" },
     { label: "Services", value: stats?.totalServices ?? "—", icon: <Scissors className="h-5 w-5" />, color: "bg-secondary text-secondary-foreground" },
     { label: "Staff", value: stats?.totalStaff ?? "—", icon: <Users className="h-5 w-5" />, color: "bg-primary/10 text-primary" },
@@ -1147,6 +1193,7 @@ const Platform = () => {
   const navItems: { tab: Tab; label: string; icon: React.ReactNode }[] = [
     { tab: "overview", label: "Overview", icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
     { tab: "tenants", label: "Tenants", icon: <Building2 className="h-3.5 w-3.5" /> },
+    { tab: "requests", label: "Requests", icon: <Inbox className="h-3.5 w-3.5" /> },
     { tab: "admins", label: "Admins", icon: <Shield className="h-3.5 w-3.5" /> },
     { tab: "subscriptions", label: "Subscriptions", icon: <CreditCard className="h-3.5 w-3.5" /> },
     { tab: "deployments", label: "Deployments", icon: <Key className="h-3.5 w-3.5" /> },
@@ -1198,7 +1245,7 @@ const Platform = () => {
         {tab === "overview" && (
           <div>
             <h2 className="mb-6 font-display text-lg font-bold text-foreground sm:text-xl">Platform Overview</h2>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 sm:gap-4">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6 sm:gap-4">
               {statCards.map((s) => (
                 <div key={s.label} className="rounded-xl border border-border bg-card p-4 sm:p-5">
                   <div className={`mb-3 inline-flex rounded-lg p-2 ${s.color}`}>{s.icon}</div>
@@ -1208,7 +1255,51 @@ const Platform = () => {
               ))}
             </div>
 
+            {/* Platform booking revenue trend */}
             <div className="mt-8">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="font-display text-sm font-bold text-foreground">Booking revenue (all tenants)</h3>
+                <select value={platformAnalyticsPeriod} onChange={(e) => setPlatformAnalyticsPeriod(e.target.value as "day" | "week" | "month")} className="rounded-lg border border-border bg-background px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary">
+                  <option value="day">Today</option>
+                  <option value="week">This week</option>
+                  <option value="month">This month</option>
+                </select>
+              </div>
+              {loadingPlatformAnalytics ? <p className="text-xs text-muted-foreground">Loading…</p> : platformAnalytics?.revenueByPeriod?.length ? (
+                <div className="rounded-xl border border-border bg-card p-4">
+                  <p className="mb-2 text-xs text-muted-foreground">Total: ${platformAnalytics.totalRevenue.toFixed(0)} · {platformAnalytics.confirmedBookings} confirmed</p>
+                  <ChartContainer config={{ revenue: { label: "Revenue", color: "hsl(var(--primary))" } }}>
+                    <LineChart data={platformAnalytics.revenueByPeriod}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <XAxis dataKey="date" className="text-[10px]" />
+                      <YAxis className="text-[10px]" />
+                      <ChartTooltip content={<ChartTooltipContent />} />
+                      <Line type="monotone" dataKey="revenue" stroke="hsl(var(--primary))" strokeWidth={2} />
+                    </LineChart>
+                  </ChartContainer>
+                </div>
+              ) : platformAnalytics ? (
+                <div className="rounded-xl border border-border bg-card p-4 text-center">
+                  <p className="text-xs text-muted-foreground">No booking revenue in this period.</p>
+                  <p className="mt-1 text-sm font-medium text-card-foreground">Total: ${platformAnalytics.totalRevenue.toFixed(0)}</p>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="mt-8">
+              <h3 className="mb-3 font-display text-sm font-bold text-foreground">Recent Activity</h3>
+              {auditLogs?.length ? (
+                <div className="mb-6 space-y-2 rounded-xl border border-border bg-card p-3">
+                  {auditLogs.slice(0, 10).map((log) => (
+                    <div key={log.id} className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                      <span className="font-medium text-card-foreground">{log.action}</span>
+                      <span>{log.table_name}</span>
+                      {log.record_id && <span className="truncate font-mono">{log.record_id.slice(0, 8)}…</span>}
+                      <span>{new Date(log.created_at).toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               <h3 className="mb-3 font-display text-sm font-bold text-foreground">Recent Tenants</h3>
               <div className="space-y-2">
                 {tenants?.slice(0, 5).map((t) => {
@@ -1322,6 +1413,163 @@ const Platform = () => {
                   );
                 })}
                 <RecordsPagination page={tenantsPag.page} totalPages={tenantsPag.totalPages} onPageChange={tenantsPag.setPage} />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tenant Requests Tab */}
+        {tab === "requests" && (
+          <div>
+            <div className="mb-4 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
+              <h2 className="font-display text-lg font-bold text-foreground sm:text-xl">Lead / Demo Requests</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] text-muted-foreground">Status:</span>
+                <select
+                  value={requestStatusFilter}
+                  onChange={(e) => setRequestStatusFilter(e.target.value as TenantRequest["status"] | "")}
+                  className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="">All</option>
+                  <option value="pending">Pending</option>
+                  <option value="contacted">Contacted</option>
+                  <option value="converted">Converted</option>
+                  <option value="rejected">Rejected</option>
+                </select>
+              </div>
+            </div>
+            {loadingRequests ? (
+              <p className="text-sm text-muted-foreground">Loading...</p>
+            ) : !tenantRequests?.length ? (
+              <div className="rounded-xl border border-border bg-card p-8 text-center">
+                <Inbox className="mx-auto h-8 w-8 text-muted-foreground mb-2" />
+                <p className="text-sm text-muted-foreground">No requests yet.</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">Requests from the public contact/demo form appear here.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {tenantRequests.map((req) => (
+                  <div key={req.id} className="rounded-xl border border-border bg-card p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold text-card-foreground">{req.name}</p>
+                        <p className="text-xs text-muted-foreground">{req.email}</p>
+                        {req.phone && <p className="text-xs text-muted-foreground">{req.phone}</p>}
+                        {req.company && <p className="text-xs text-muted-foreground">{req.company}</p>}
+                        {req.business_type && (
+                          <span className="mt-1 inline-block rounded bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground">{req.business_type}</span>
+                        )}
+                        {req.message && <p className="mt-2 text-xs text-card-foreground">{req.message}</p>}
+                        {req.notes && <p className="mt-2 text-xs text-muted-foreground border-l-2 border-primary pl-2">Notes: {req.notes}</p>}
+                        <p className="mt-1 text-[10px] text-muted-foreground">Submitted {new Date(req.created_at).toLocaleString()}</p>
+                      </div>
+                      <div className="flex flex-col items-end gap-2">
+                        <select
+                          value={req.status}
+                          onChange={async (e) => {
+                            const status = e.target.value as TenantRequest["status"];
+                            try {
+                              await updateTenantRequest.mutateAsync({ id: req.id, status });
+                              showSuccess("Updated", "Request status updated.");
+                            } catch {
+                              showError("Failed", "Could not update status.");
+                            }
+                          }}
+                          className="rounded-lg border border-border bg-background px-2 py-1 text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                        >
+                          <option value="pending">Pending</option>
+                          <option value="contacted">Contacted</option>
+                          <option value="converted">Converted</option>
+                          <option value="rejected">Rejected</option>
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingRequest(req);
+                            setRequestNotes(req.notes || "");
+                          }}
+                          className="rounded-lg border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        >
+                          Edit notes
+                        </button>
+                        {req.tenant_id ? (
+                          <a
+                            href={`/platform`}
+                            onClick={(e) => { e.preventDefault(); setTab("tenants"); }}
+                            className="text-[10px] text-primary hover:underline"
+                          >
+                            Linked tenant →
+                          </a>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const slug = (req.company || req.name).toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+                              setConvertingFromRequest(req);
+                              setEditing(null);
+                              setForm({
+                                name: req.name,
+                                slug: slug || "new-tenant",
+                                business_type: (req.business_type as string) || "salon",
+                                deployment_type: "hosted",
+                                logo_url: "",
+                                favicon_url: "",
+                                status: "active",
+                                custom_domain: "",
+                                subscription_plan: "free",
+                              });
+                              setThemeForm(DEFAULT_THEME);
+                              setFormSection("general");
+                              setShowForm(true);
+                            }}
+                            className="rounded-lg bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground hover:bg-primary/90"
+                          >
+                            Convert to tenant
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {editingRequest && (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
+                <div className="w-full max-w-md rounded-xl border border-border bg-card p-4 shadow-lg">
+                  <h3 className="text-sm font-semibold text-card-foreground mb-2">Notes for {editingRequest.name}</h3>
+                  <textarea
+                    value={requestNotes}
+                    onChange={(e) => setRequestNotes(e.target.value)}
+                    rows={4}
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    placeholder="Internal notes..."
+                  />
+                  <div className="mt-3 flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setEditingRequest(null); setRequestNotes(""); }}
+                      className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-secondary"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await updateTenantRequest.mutateAsync({ id: editingRequest.id, notes: requestNotes || null });
+                          showSuccess("Saved", "Notes updated.");
+                          setEditingRequest(null);
+                          setRequestNotes("");
+                        } catch {
+                          showError("Failed", "Could not save notes.");
+                        }
+                      }}
+                      className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -1477,6 +1725,17 @@ const Platform = () => {
             <p className="mb-6 text-sm text-muted-foreground">
               Configure how you collect payments from customers (e.g. salon owners subscribing to plans). Use Stripe Payment Links and/or PayPal. Secret keys must be set in your environment (Supabase/Netlify); only public keys and payment links are stored here.
             </p>
+            <div className="mb-6 max-w-xl rounded-xl border border-primary/30 bg-primary/5 p-4 text-sm text-foreground">
+              <p className="font-semibold text-primary mb-1">Success URL setup</p>
+              <p className="text-muted-foreground text-xs mb-2">
+                So customers land in onboarding after payment, set the success/return URL in each link:
+              </p>
+              <ul className="text-[11px] text-muted-foreground space-y-0.5 list-disc list-inside">
+                <li><strong>Stripe:</strong> In Payment Link settings set success URL to <code className="rounded bg-muted px-1">https://your-domain/onboarding?plan=starter&amp;session_id=&#123;CHECKOUT_SESSION_ID&#125;</code> (use <code className="rounded bg-muted px-1">plan=lifetime</code> for the $500 link).</li>
+                <li><strong>PayPal:</strong> Set return URL to <code className="rounded bg-muted px-1">https://your-domain/onboarding?plan=starter</code> or <code className="rounded bg-muted px-1">plan=lifetime</code>. Customers are matched by email after payment.</li>
+              </ul>
+              <p className="text-[10px] text-muted-foreground mt-2">See <code className="rounded bg-muted px-1">PAYMENTS_AND_TRIAL_SETUP.md</code> in the repo for webhooks and full setup.</p>
+            </div>
             <div className="max-w-xl space-y-6 rounded-xl border border-border bg-card p-6">
               <div>
                 <label className="text-[11px] font-medium text-muted-foreground">Accept payments via</label>

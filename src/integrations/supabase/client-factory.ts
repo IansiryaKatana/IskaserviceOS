@@ -61,11 +61,7 @@ export function createTenantClient(
 }
 
 /**
- * Hook to get tenant-aware client
- * This should be used in components that need to work with external tenants
+ * Hook to get tenant-aware client (hosted = main DB, external = tenant's Supabase).
+ * Re-export from context for convenience; prefer useSupabase from supabase-context.
  */
-export function useTenantClient(tenantId: string | undefined) {
-  // For now, we'll use the default client and let RLS handle tenant isolation
-  // External client routing should be handled server-side via Edge Functions
-  return defaultClient;
-}
+export { useSupabase as useTenantClient } from "./supabase-context";

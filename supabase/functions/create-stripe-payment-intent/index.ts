@@ -40,10 +40,38 @@ serve(async (req) => {
   }
 
   try {
-    const body = await req.json();
-    const amount = Number(body?.amount ?? 0);
-    const currency = (body?.currency ?? "usd").toString().toLowerCase();
-    const tenantId = body?.tenant_id ?? null;
+    let body: Record<string, unknown>;
+    try {
+      body = (await req.json()) as Record<string, unknown> ?? {};
+    } catch {
+      return new Response(JSON.stringify({ error: "Invalid JSON body" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (!body || typeof body !== "object") {
+      return new Response(JSON.stringify({ error: "Missing request body" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const plan = (body.plan ?? "").toString().toLowerCase();
+    const emailRaw = body.customer_email ?? body.customerEmail;
+    const customerEmail = typeof emailRaw === "string" ? emailRaw.trim() : null;
+    let amount = Number(body.amount ?? 0);
+    const currency = (body.currency ?? "usd").toString().toLowerCase();
+    let tenantId = body.tenant_id ?? null;
+
+    if (plan === "starter" || plan === "lifetime") {
+      amount = plan === "lifetime" ? 500 : 45;
+      tenantId = null;
+      if (!customerEmail) {
+        return new Response(JSON.stringify({ error: "Email required for plan payment" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
 
     if (!Number.isFinite(amount) || amount <= 0) {
       return new Response(JSON.stringify({ error: "Invalid amount" }), {
@@ -64,17 +92,22 @@ serve(async (req) => {
     }
 
     const amountCents = Math.round(amount * 100);
+    const params: Record<string, string> = {
+      amount: String(amountCents),
+      currency: currency.slice(0, 3),
+      "automatic_payment_methods[enabled]": "true",
+    };
+    if (plan && customerEmail) {
+      params["metadata[plan]"] = plan;
+      params["metadata[customer_email]"] = customerEmail;
+    }
     const res = await fetch("https://api.stripe.com/v1/payment_intents", {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         Authorization: `Bearer ${stripeSecret}`,
       },
-      body: new URLSearchParams({
-        amount: String(amountCents),
-        currency: currency.slice(0, 3),
-        "automatic_payment_methods[enabled]": "true",
-      }),
+      body: new URLSearchParams(params),
     });
 
     if (!res.ok) {
@@ -94,8 +127,10 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    const out: { clientSecret: string; paymentIntentId?: string } = { clientSecret };
+    if (plan && data.id) out.paymentIntentId = data.id;
 
-    return new Response(JSON.stringify({ clientSecret }), {
+    return new Response(JSON.stringify(out), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {

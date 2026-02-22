@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/integrations/supabase/supabase-context";
 
 export interface StockItem {
   id: string;
@@ -35,6 +35,7 @@ export interface StockTransaction {
 }
 
 export function useStockItems(tenantId: string | undefined, options?: { activeOnly?: boolean }) {
+  const supabase = useSupabase();
   return useQuery({
     queryKey: ["stock-items", tenantId, options?.activeOnly],
     queryFn: async () => {
@@ -56,6 +57,7 @@ export function useStockItems(tenantId: string | undefined, options?: { activeOn
 }
 
 export function useStockItem(itemId: string | undefined) {
+  const supabase = useSupabase();
   return useQuery({
     queryKey: ["stock-item", itemId],
     queryFn: async () => {
@@ -73,6 +75,7 @@ export function useStockItem(itemId: string | undefined) {
 }
 
 export function useCreateStockItem() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (item: {
@@ -117,6 +120,7 @@ export function useCreateStockItem() {
 }
 
 export function useUpdateStockItem() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...updates }: Partial<StockItem> & { id: string }) => {
@@ -137,6 +141,7 @@ export function useUpdateStockItem() {
 }
 
 export function useDeleteStockItem() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, tenantId }: { id: string; tenantId: string }) => {
@@ -150,6 +155,7 @@ export function useDeleteStockItem() {
 }
 
 export function useStockAdjustment() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (params: {
@@ -200,6 +206,7 @@ export function useStockAdjustment() {
 }
 
 export function useStockTransactions(tenantId: string | undefined, stockItemId?: string) {
+  const supabase = useSupabase();
   return useQuery({
     queryKey: ["stock-transactions", tenantId, stockItemId],
     queryFn: async () => {

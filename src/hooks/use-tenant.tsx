@@ -32,7 +32,11 @@ interface TenantCtx {
   tenant: Tenant | null;
   tenantId: string;
   loading: boolean;
+  /** True when tenant was resolved from custom domain (hostname), so "/" should show the booking page. */
+  tenantLoadedByDomain: boolean;
   setTenantBySlug: (slug: string) => Promise<void>;
+  /** Refetch current tenant (e.g. after updating branding in Admin). */
+  refreshTenant: () => Promise<void>;
 }
 
 // Default tenant ID for backward compat
@@ -40,10 +44,13 @@ const DEFAULT_TENANT_ID = "00000000-0000-0000-0000-000000000001";
 
 const TenantContext = createContext<TenantCtx | undefined>(undefined);
 
+const getMainDomain = () => (import.meta.env.VITE_APP_MAIN_DOMAIN ?? "").toString().trim();
+
 export function TenantProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [loading, setLoading] = useState(true);
+  const [tenantLoadedByDomain, setTenantLoadedByDomain] = useState(false);
 
   const loadTenant = useCallback(async (id: string) => {
     try {
@@ -77,27 +84,6 @@ export function TenantProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Load user's tenant when logged in, else default
-  useEffect(() => {
-    if (!user) {
-      loadTenant(DEFAULT_TENANT_ID);
-      return;
-    }
-    const loadUserTenant = async () => {
-      try {
-        const { data: tid, error } = await supabase.rpc("get_user_tenant_id", { _user_id: user.id });
-        if (!error && tid) {
-          await loadTenant(tid);
-          return;
-        }
-      } catch (_) {
-        /* fallback to default */
-      }
-      loadTenant(DEFAULT_TENANT_ID);
-    };
-    loadUserTenant();
-  }, [user?.id, loadTenant]);
-
   const setTenantBySlug = useCallback(async (slug: string) => {
     setLoading(true);
     try {
@@ -124,13 +110,64 @@ export function TenantProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // On custom domain: resolve tenant by host and set tenantLoadedByDomain. Otherwise load user's tenant or default.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const host = window.location.hostname;
+    const main = getMainDomain();
+    const isCustomDomain =
+      !!main && host !== "localhost" && host !== "127.0.0.1" && host !== main;
+
+    if (isCustomDomain) {
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-tenant-by-domain?host=${encodeURIComponent(host)}`;
+      setLoading(true);
+      fetch(url)
+        .then((r) => r.json())
+        .then(async (data: { slug?: string }) => {
+          if (data?.slug) {
+            await setTenantBySlug(data.slug);
+            setTenantLoadedByDomain(true);
+          } else {
+            loadTenant(DEFAULT_TENANT_ID);
+          }
+        })
+        .catch(() => loadTenant(DEFAULT_TENANT_ID))
+        .finally(() => setLoading(false));
+      return;
+    }
+
+    if (!user) {
+      loadTenant(DEFAULT_TENANT_ID);
+      return;
+    }
+    const loadUserTenant = async () => {
+      try {
+        const { data: tid, error } = await supabase.rpc("get_user_tenant_id", { _user_id: user.id });
+        if (!error && tid) {
+          await loadTenant(tid);
+          return;
+        }
+      } catch (_) {
+        /* fallback to default */
+      }
+      loadTenant(DEFAULT_TENANT_ID);
+    };
+    loadUserTenant();
+  }, [user?.id, loadTenant, setTenantBySlug]);
+
+  const refreshTenant = useCallback(async () => {
+    if (tenant?.id) await loadTenant(tenant.id);
+  }, [tenant?.id, loadTenant]);
+
   return (
     <TenantContext.Provider
       value={{
         tenant,
         tenantId: tenant?.id || DEFAULT_TENANT_ID,
         loading,
+        tenantLoadedByDomain,
         setTenantBySlug,
+        refreshTenant,
       }}
     >
       {children}

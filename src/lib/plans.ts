@@ -10,7 +10,7 @@ export const PLAN_LIFETIME = "lifetime";
 export type PlanType = typeof PLAN_FREE | typeof PLAN_STARTER | typeof PLAN_LIFETIME;
 
 export const TRIAL_DAYS = 15;
-export const GRACE_DAYS_AFTER_TRIAL = 7; // Days before data removal after trial ends
+export const GRACE_DAYS_AFTER_TRIAL = 3; // Days before data removal after trial ends (plan: 3-day grace)
 
 export const PLANS = {
   [PLAN_FREE]: {

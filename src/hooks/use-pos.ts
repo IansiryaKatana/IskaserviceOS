@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/integrations/supabase/supabase-context";
 
 export interface PosSale {
   id: string;
@@ -36,8 +36,10 @@ export interface PosCartItem {
 }
 
 export function usePosSales(tenantId: string | undefined, limit = 50) {
+  const supabase = useSupabase();
   return useQuery({
     queryKey: ["pos-sales", tenantId, limit],
+    staleTime: 1 * 60 * 1000,
     queryFn: async () => {
       if (!tenantId) return [];
       const { data, error } = await supabase
@@ -54,6 +56,7 @@ export function usePosSales(tenantId: string | undefined, limit = 50) {
 }
 
 export function useCompletePosSale() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (params: {
@@ -154,8 +157,10 @@ export function useCompletePosSale() {
 }
 
 export function usePosSaleStats(tenantId: string | undefined, period: "day" | "week" | "month" = "day") {
+  const supabase = useSupabase();
   return useQuery({
     queryKey: ["pos-sale-stats", tenantId, period],
+    staleTime: 1 * 60 * 1000,
     queryFn: async () => {
       if (!tenantId) return { count: 0, total: 0 };
 

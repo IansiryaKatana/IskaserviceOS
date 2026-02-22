@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase as defaultSupabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/integrations/supabase/supabase-context";
 
 export interface Review {
   id: string;
@@ -51,6 +52,7 @@ export function useTenantReviews(tenantId: string | undefined) {
 }
 
 export function useTenantRatingStats(tenantId: string | undefined) {
+  const supabase = useSupabase();
   return useQuery({
     queryKey: ["tenant-rating-stats", tenantId],
     queryFn: async () => {
@@ -66,6 +68,7 @@ export function useTenantRatingStats(tenantId: string | undefined) {
 }
 
 export function useCreateReview() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (review: {
@@ -100,9 +103,7 @@ export function usePlatformReviews() {
   return useQuery({
     queryKey: ["platform-reviews"],
     queryFn: async () => {
-      // For platform reviews, we can use tenant_id = NULL or a special flag
-      // For now, let's get all reviews and group by tenant
-      const { data, error } = await supabase
+      const { data, error } = await defaultSupabase
         .from("reviews")
         .select("*, tenants(name, slug, business_type)")
         .eq("is_approved", true)

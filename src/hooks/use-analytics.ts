@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase as defaultSupabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/integrations/supabase/supabase-context";
 
 export interface RevenueData {
   date: string;
@@ -62,6 +63,7 @@ function getPeriodStart(period: "day" | "week" | "month"): string {
 
 // Tenant Analytics
 export function useTenantAnalytics(tenantId: string | undefined, period: "day" | "week" | "month" = "month") {
+  const supabase = useSupabase();
   return useQuery({
     queryKey: ["tenant-analytics", tenantId, period],
     queryFn: async (): Promise<TenantAnalytics> => {
@@ -216,10 +218,11 @@ export function useTenantAnalytics(tenantId: string | undefined, period: "day" |
 export function usePlatformAnalytics(period: "day" | "week" | "month" = "month") {
   return useQuery({
     queryKey: ["platform-analytics", period],
+    staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       const periodStart = getPeriodStart(period);
 
-      const { data: bookings, error } = await supabase
+      const { data: bookings, error } = await defaultSupabase
         .from("bookings")
         .select("tenant_id, total_price, status, booking_date")
         .gte("booking_date", periodStart);
@@ -231,6 +234,16 @@ export function usePlatformAnalytics(period: "day" | "week" | "month" = "month")
 
       const totalRevenue = confirmed.reduce((sum, b) => sum + (Number(b.total_price) || 0), 0);
       const totalBookings = bookingsData.length;
+
+      // Revenue by date (for trend chart)
+      const revenueByDate = new Map<string, number>();
+      confirmed.forEach((b) => {
+        const date = b.booking_date;
+        revenueByDate.set(date, (revenueByDate.get(date) || 0) + (Number(b.total_price) || 0));
+      });
+      const revenueByPeriod: RevenueData[] = Array.from(revenueByDate.entries())
+        .map(([date, revenue]) => ({ date, revenue, bookings: 0, average: revenue }))
+        .sort((a, b) => a.date.localeCompare(b.date));
 
       // Revenue by tenant
       const tenantRevenue = new Map<string, number>();
@@ -245,6 +258,7 @@ export function usePlatformAnalytics(period: "day" | "week" | "month" = "month")
         totalRevenue,
         totalBookings,
         confirmedBookings: confirmed.length,
+        revenueByPeriod,
         tenantRevenue: Array.from(tenantRevenue.entries()).map(([tenant_id, revenue]) => ({
           tenant_id,
           revenue,

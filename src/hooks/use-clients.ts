@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/integrations/supabase/supabase-context";
 
 export interface Client {
   id: string;
@@ -16,20 +16,27 @@ export interface Client {
   total_spent: number;
   total_bookings: number;
   last_booking_date: string | null;
+  tags: string[] | null;
   created_at: string;
   updated_at: string;
 }
 
-export function useClients(tenantId: string | undefined) {
+export function useClients(tenantId: string | undefined, filters?: { tag?: string }) {
+  const supabase = useSupabase();
   return useQuery({
-    queryKey: ["clients", tenantId],
+    queryKey: ["clients", tenantId, filters?.tag],
+    staleTime: 2 * 60 * 1000,
     queryFn: async () => {
       if (!tenantId) return [];
-      const { data, error } = await supabase
+      let q = supabase
         .from("clients")
         .select("*")
         .eq("tenant_id", tenantId)
         .order("created_at", { ascending: false });
+      if (filters?.tag) {
+        q = q.contains("tags", [filters.tag]);
+      }
+      const { data, error } = await q;
       if (error) throw error;
       return data as Client[];
     },
@@ -38,8 +45,10 @@ export function useClients(tenantId: string | undefined) {
 }
 
 export function useClient(clientId: string | undefined) {
+  const supabase = useSupabase();
   return useQuery({
     queryKey: ["client", clientId],
+    staleTime: 1 * 60 * 1000,
     queryFn: async () => {
       if (!clientId) return null;
       const { data, error } = await supabase
@@ -55,6 +64,7 @@ export function useClient(clientId: string | undefined) {
 }
 
 export function useCreateClient() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (client: {
@@ -65,6 +75,7 @@ export function useCreateClient() {
       last_name?: string | null;
       user_id?: string | null;
       notes?: string | null;
+      tags?: string[] | null;
     }) => {
       const { data, error } = await supabase
         .from("clients")
@@ -81,6 +92,7 @@ export function useCreateClient() {
 }
 
 export function useUpdateClient() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...updates }: Partial<Client> & { id: string }) => {
@@ -101,6 +113,7 @@ export function useUpdateClient() {
 }
 
 export function useDeleteClient() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, tenantId }: { id: string; tenantId: string }) => {

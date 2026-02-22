@@ -52,6 +52,7 @@ serve(async (req) => {
           <p style="margin: 4px 0;"><strong>Time:</strong> ${formatTime(booking.booking_time)}</p>
           ${booking.total_price ? `<p style="margin: 4px 0;"><strong>Total:</strong> $${Number(booking.total_price).toFixed(0)}</p>` : ""}
         </div>
+        ${booking.cancel_url ? `<p style="color: #666; font-size: 14px; margin: 16px 0;">To cancel or reschedule: <a href="${booking.cancel_url}" style="color: #0d6efd;">use this link</a>.</p>` : ""}
         <p style="color: #666; font-size: 14px;">We look forward to seeing you!</p>
         <p style="color: #999; font-size: 12px;">— ${tenantName}</p>
       </div>

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/integrations/supabase/supabase-context";
 import type { Json } from "@/integrations/supabase/types";
 
 // Default tenant for backward compat
@@ -10,6 +10,7 @@ export interface Service {
   name: string;
   description: string | null;
   duration_minutes: number;
+  buffer_minutes?: number;
   price: number;
   category: string;
   image_url: string | null;
@@ -87,6 +88,10 @@ export interface Booking {
   metadata: Json | null;
   created_at: string;
   updated_at: string;
+  cancel_token?: string | null;
+  is_recurring?: boolean;
+  recurrence_rule?: string | null;
+  parent_booking_id?: string | null;
 }
 
 export interface ServiceCategory {
@@ -104,9 +109,11 @@ export interface ServiceCategory {
 
 // Service Categories
 export function useServiceCategories(tenantId?: string) {
+  const supabase = useSupabase();
   const tid = tenantId || DEFAULT_TENANT_ID;
   return useQuery({
     queryKey: ["service-categories", tid],
+    staleTime: 2 * 60 * 1000,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("service_categories")
@@ -122,9 +129,11 @@ export function useServiceCategories(tenantId?: string) {
 
 // Services
 export function useServices(tenantId?: string) {
+  const supabase = useSupabase();
   const tid = tenantId || DEFAULT_TENANT_ID;
   return useQuery({
     queryKey: ["services", tid],
+    staleTime: 2 * 60 * 1000,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("services")
@@ -139,9 +148,11 @@ export function useServices(tenantId?: string) {
 }
 
 export function useAllServices(tenantId?: string) {
+  const supabase = useSupabase();
   const tid = tenantId || DEFAULT_TENANT_ID;
   return useQuery({
     queryKey: ["all-services", tid],
+    staleTime: 2 * 60 * 1000,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("services")
@@ -155,6 +166,7 @@ export function useAllServices(tenantId?: string) {
 }
 
 export function useCreateService() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (service: Omit<Service, "id" | "created_at" | "updated_at">) => {
@@ -171,6 +183,7 @@ export function useCreateService() {
 }
 
 export function useUpdateService() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...updates }: Partial<Service> & { id: string }) => {
@@ -186,6 +199,7 @@ export function useUpdateService() {
 }
 
 export function useDeleteService() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
@@ -201,9 +215,11 @@ export function useDeleteService() {
 
 // Locations
 export function useLocations(tenantId?: string) {
+  const supabase = useSupabase();
   const tid = tenantId || DEFAULT_TENANT_ID;
   return useQuery({
     queryKey: ["locations", tid],
+    staleTime: 2 * 60 * 1000,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("locations")
@@ -218,9 +234,11 @@ export function useLocations(tenantId?: string) {
 }
 
 export function useAllLocations(tenantId?: string) {
+  const supabase = useSupabase();
   const tid = tenantId || DEFAULT_TENANT_ID;
   return useQuery({
     queryKey: ["all-locations", tid],
+    staleTime: 2 * 60 * 1000,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("locations")
@@ -234,6 +252,7 @@ export function useAllLocations(tenantId?: string) {
 }
 
 export function useCreateLocation() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (loc: Omit<Location, "id" | "created_at" | "updated_at">) => {
@@ -250,6 +269,7 @@ export function useCreateLocation() {
 }
 
 export function useUpdateLocation() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...updates }: Partial<Location> & { id: string }) => {
@@ -265,6 +285,7 @@ export function useUpdateLocation() {
 }
 
 export function useDeleteLocation() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
@@ -280,9 +301,11 @@ export function useDeleteLocation() {
 
 // Staff
 export function useStaff(tenantId?: string) {
+  const supabase = useSupabase();
   const tid = tenantId || DEFAULT_TENANT_ID;
   return useQuery({
     queryKey: ["staff", tid],
+    staleTime: 2 * 60 * 1000,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("staff")
@@ -297,9 +320,11 @@ export function useStaff(tenantId?: string) {
 }
 
 export function useAllStaff(tenantId?: string) {
+  const supabase = useSupabase();
   const tid = tenantId || DEFAULT_TENANT_ID;
   return useQuery({
     queryKey: ["all-staff", tid],
+    staleTime: 2 * 60 * 1000,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("staff")
@@ -313,6 +338,7 @@ export function useAllStaff(tenantId?: string) {
 }
 
 export function useCreateStaff() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (s: Omit<Staff, "id" | "created_at" | "updated_at">) => {
@@ -329,6 +355,7 @@ export function useCreateStaff() {
 }
 
 export function useUpdateStaff() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...updates }: Partial<Staff> & { id: string }) => {
@@ -344,6 +371,7 @@ export function useUpdateStaff() {
 }
 
 export function useDeleteStaff() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
@@ -359,8 +387,10 @@ export function useDeleteStaff() {
 
 // Staff Schedules
 export function useStaffSchedules(staffId?: string) {
+  const supabase = useSupabase();
   return useQuery({
     queryKey: ["staff-schedules", staffId],
+    staleTime: 2 * 60 * 1000,
     queryFn: async () => {
       let query = supabase.from("staff_schedules").select("*");
       if (staffId) query = query.eq("staff_id", staffId);
@@ -374,9 +404,11 @@ export function useStaffSchedules(staffId?: string) {
 
 // Bookings
 export function useBookings(tenantId?: string) {
+  const supabase = useSupabase();
   const tid = tenantId || DEFAULT_TENANT_ID;
   return useQuery({
     queryKey: ["bookings", tid],
+    staleTime: 1 * 60 * 1000,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("bookings")
@@ -390,24 +422,36 @@ export function useBookings(tenantId?: string) {
 }
 
 export function useBookingsByDate(date?: string, staffId?: string) {
+  const supabase = useSupabase();
   return useQuery({
     queryKey: ["bookings-by-date", date, staffId],
+    staleTime: 1 * 60 * 1000,
     queryFn: async () => {
-      let query = supabase.from("bookings").select("*").eq("booking_date", date!);
+      let query = supabase
+        .from("bookings")
+        .select("*, services(duration_minutes, buffer_minutes)")
+        .eq("booking_date", date!);
       if (staffId) query = query.eq("staff_id", staffId);
       const { data, error } = await query;
       if (error) throw error;
-      return data as Booking[];
+      return data as (Booking & { services?: { duration_minutes: number; buffer_minutes?: number } | null })[];
     },
     enabled: !!date,
   });
 }
 
 export function useCreateBooking() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (booking: Omit<Booking, "id" | "created_at" | "updated_at">) => {
-      const payload = { ...booking, tenant_id: booking.tenant_id || DEFAULT_TENANT_ID };
+    mutationFn: async (booking: Omit<Booking, "id" | "created_at" | "updated_at"> & { is_recurring?: boolean; recurrence_rule?: string | null; parent_booking_id?: string | null }) => {
+      const payload = {
+        ...booking,
+        tenant_id: booking.tenant_id || DEFAULT_TENANT_ID,
+        is_recurring: booking.is_recurring ?? false,
+        recurrence_rule: booking.recurrence_rule ?? null,
+        parent_booking_id: booking.parent_booking_id ?? null,
+      };
       
       // Try to find or create client
       let clientId: string | null = null;
@@ -460,10 +504,14 @@ export function useCreateBooking() {
         }
       }
       
-      // Create booking with client_id
+      // Create booking with client_id (include recurring fields for DB)
+      const insertPayload: Record<string, unknown> = { ...payload, client_id: clientId };
+      if (payload.is_recurring !== undefined) insertPayload.is_recurring = payload.is_recurring;
+      if (payload.recurrence_rule !== undefined) insertPayload.recurrence_rule = payload.recurrence_rule;
+      if (payload.parent_booking_id !== undefined) insertPayload.parent_booking_id = payload.parent_booking_id;
       const { data, error } = await supabase
         .from("bookings")
-        .insert({ ...payload, client_id: clientId })
+        .insert(insertPayload)
         .select()
         .single();
       
@@ -479,6 +527,7 @@ export function useCreateBooking() {
 }
 
 export function useUpdateBooking() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...updates }: Partial<Booking> & { id: string }) => {
@@ -494,6 +543,7 @@ export function useUpdateBooking() {
 }
 
 export function useDeleteBooking() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
@@ -509,6 +559,7 @@ export function useDeleteBooking() {
 
 // Service Category mutations
 export function useCreateServiceCategory() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (cat: Omit<ServiceCategory, "id" | "created_at" | "updated_at">) => {
@@ -522,6 +573,7 @@ export function useCreateServiceCategory() {
 }
 
 export function useUpdateServiceCategory() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...updates }: Partial<ServiceCategory> & { id: string }) => {
@@ -534,6 +586,7 @@ export function useUpdateServiceCategory() {
 }
 
 export function useDeleteServiceCategory() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
@@ -545,9 +598,11 @@ export function useDeleteServiceCategory() {
 }
 
 export function useAllServiceCategories(tenantId?: string) {
+  const supabase = useSupabase();
   const tid = tenantId || DEFAULT_TENANT_ID;
   return useQuery({
     queryKey: ["all-service-categories", tid],
+    staleTime: 2 * 60 * 1000,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("service_categories")
@@ -562,9 +617,11 @@ export function useAllServiceCategories(tenantId?: string) {
 
 // Staff Schedule mutations
 export function useAllStaffSchedules(tenantId?: string) {
+  const supabase = useSupabase();
   const tid = tenantId || DEFAULT_TENANT_ID;
   return useQuery({
     queryKey: ["all-staff-schedules", tid],
+    staleTime: 2 * 60 * 1000,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("staff_schedules")
@@ -579,6 +636,7 @@ export function useAllStaffSchedules(tenantId?: string) {
 }
 
 export function useCreateStaffSchedule() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (schedule: Omit<StaffSchedule, "id" | "created_at">) => {
@@ -595,6 +653,7 @@ export function useCreateStaffSchedule() {
 }
 
 export function useUpdateStaffSchedule() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...updates }: Partial<StaffSchedule> & { id: string }) => {
@@ -610,6 +669,7 @@ export function useUpdateStaffSchedule() {
 }
 
 export function useDeleteStaffSchedule() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {

@@ -125,21 +125,33 @@ export function useTenantSubscriptions() {
 }
 
 // Platform stats
+const STARTER_MONTHLY = 45;
+
 export function usePlatformStats() {
   return useQuery({
     queryKey: ["platform-stats"],
     queryFn: async () => {
-      const [tenants, bookings, services, staff] = await Promise.all([
+      const [tenantsRes, bookingsRes, servicesRes, staffRes, subsRes] = await Promise.all([
         supabase.from("tenants").select("id", { count: "exact", head: true }),
         supabase.from("bookings").select("id", { count: "exact", head: true }),
         supabase.from("services").select("id", { count: "exact", head: true }),
         supabase.from("staff").select("id", { count: "exact", head: true }),
+        supabase.from("tenant_subscriptions").select("tenant_id, plan, status"),
       ]);
+      const subs = (subsRes.data || []) as { tenant_id: string; plan: string; status: string }[];
+      const activeStarter = subs.filter((s) => (s.plan || "").toLowerCase() === "starter" && (s.status || "").toLowerCase() === "active").length;
+      const activeLifetime = subs.filter((s) => (s.plan || "").toLowerCase() === "lifetime" && (s.status || "").toLowerCase() === "active").length;
+      const mrr = activeStarter * STARTER_MONTHLY;
+      const activePayingTenants = activeStarter + activeLifetime;
       return {
-        totalTenants: tenants.count || 0,
-        totalBookings: bookings.count || 0,
-        totalServices: services.count || 0,
-        totalStaff: staff.count || 0,
+        totalTenants: tenantsRes.count || 0,
+        totalBookings: bookingsRes.count || 0,
+        totalServices: servicesRes.count || 0,
+        totalStaff: staffRes.count || 0,
+        mrr,
+        activeStarter,
+        activeLifetime,
+        activePayingTenants,
       };
     },
   });

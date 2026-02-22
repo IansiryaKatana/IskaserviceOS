@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/integrations/supabase/supabase-context";
 
 export interface Payment {
   id: string;
@@ -19,6 +19,7 @@ export interface Payment {
 }
 
 export function usePayments(tenantId: string | undefined) {
+  const supabase = useSupabase();
   return useQuery({
     queryKey: ["payments", tenantId],
     queryFn: async () => {
@@ -36,6 +37,7 @@ export function usePayments(tenantId: string | undefined) {
 }
 
 export function useCreatePayment() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (payment: {
@@ -72,6 +74,7 @@ export function useCreatePayment() {
 }
 
 export function useUpdatePayment() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...updates }: Partial<Payment> & { id: string }) => {
@@ -91,6 +94,7 @@ export function useUpdatePayment() {
 }
 
 export function usePaymentStats(tenantId: string | undefined, period: "day" | "week" | "month" = "month") {
+  const supabase = useSupabase();
   return useQuery({
     queryKey: ["payment-stats", tenantId, period],
     queryFn: async () => {

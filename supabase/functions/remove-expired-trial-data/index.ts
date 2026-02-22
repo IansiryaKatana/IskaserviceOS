@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
     );
 
-    const GRACE_DAYS = 7;
+    const GRACE_DAYS = 3;
 
     const { data: subs } = await supabase
       .from("tenant_subscriptions")

@@ -3,10 +3,12 @@ import { useAuth } from "@/hooks/use-auth";
 import { useTenant } from "@/hooks/use-tenant";
 import { TenantSwitcher } from "@/components/TenantSwitcher";
 import { TrialBanner } from "@/components/TrialBanner";
-import { Navigate } from "react-router-dom";
+import { Navigate, Link } from "react-router-dom";
+import { supabase } from "@/integrations/supabase/client";
+import { useTrialStatus } from "@/hooks/use-my-subscription";
 import {
   useAllServices, useCreateService, useUpdateService, useDeleteService,
-  useBookings, useUpdateBooking, useDeleteBooking,
+  useBookings, useCreateBooking, useUpdateBooking, useDeleteBooking,
   useAllLocations, useCreateLocation, useUpdateLocation, useDeleteLocation,
   useAllStaff, useCreateStaff, useUpdateStaff, useDeleteStaff,
   useAllServiceCategories, useCreateServiceCategory, useUpdateServiceCategory, useDeleteServiceCategory,
@@ -15,14 +17,14 @@ import {
   type Service, type Location, type Staff, type ServiceCategory, type StaffSchedule,
 } from "@/hooks/use-salon-data";
 import { useTenantAnalytics } from "@/hooks/use-analytics";
-import { useClients, useCreateClient, useUpdateClient, useDeleteClient, type Client } from "@/hooks/use-clients";
+import { useClients, useClient, useCreateClient, useUpdateClient, useDeleteClient, type Client } from "@/hooks/use-clients";
 import { usePayments, useCreatePayment, useUpdatePayment, usePaymentStats, type Payment } from "@/hooks/use-payments";
 import { useStockItems, useCreateStockItem, useUpdateStockItem, useDeleteStockItem, useStockAdjustment, useStockTransactions, type StockItem } from "@/hooks/use-inventory";
 import { usePosSales, useCompletePosSale, usePosSaleStats, type PosCartItem } from "@/hooks/use-pos";
 import { useIsPlatformAdmin } from "@/hooks/use-user-roles";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts";
-import { Plus, Edit2, Trash2, ArrowUpRight, Scissors, Calendar, ChevronDown, MapPin, Users, Upload, Tag, Clock, BarChart3, UserCircle, CreditCard, Package, ShoppingCart, Minus, X, DollarSign, Receipt, Search, Settings } from "lucide-react";
+import { Plus, Edit2, Trash2, ArrowUpRight, Scissors, Calendar, ChevronDown, MapPin, Users, Upload, Tag, Clock, BarChart3, UserCircle, CreditCard, Package, ShoppingCart, Minus, X, DollarSign, Receipt, Search, Settings, Palette, FileText, ListTodo } from "lucide-react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { RecordsPagination } from "@/components/RecordsPagination";
@@ -30,8 +32,15 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/co
 import { useFeedback } from "@/hooks/use-feedback";
 import { useTenantPaymentSettingsForm } from "@/hooks/use-tenant-payment-settings";
 import { usePagination } from "@/hooks/use-pagination";
+import { useQueryClient } from "@tanstack/react-query";
+import { MetadataEditor } from "@/components/MetadataEditor";
+import { logAuditEvent } from "@/lib/audit";
+import { useAuditLogs } from "@/hooks/use-audit-logs";
+import { useWaitlist, useUpdateWaitlistEntry, type WaitlistEntry } from "@/hooks/use-waitlist";
+import { useMembershipPlans, useCreateMembershipPlan, useUpdateMembershipPlan, useDeleteMembershipPlan, type MembershipPlan } from "@/hooks/use-membership-plans";
+import { useClientMembership, useSetClientMembership, useRemoveClientMembership } from "@/hooks/use-client-memberships";
 
-type Tab = "analytics" | "services" | "bookings" | "locations" | "staff" | "categories" | "schedules" | "clients" | "payments" | "inventory" | "pos" | "settings";
+type Tab = "analytics" | "services" | "bookings" | "locations" | "staff" | "categories" | "schedules" | "clients" | "payments" | "inventory" | "pos" | "waitlist" | "membership" | "audit" | "settings";
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -43,9 +52,40 @@ interface ConfirmState {
   onConfirm: () => Promise<void>;
 }
 
+/** Build CSV from rows and column config, then trigger download */
+function exportToCSV<T extends Record<string, unknown>>(
+  rows: T[],
+  columns: { key: keyof T | string; label: string }[],
+  filename: string
+) {
+  const escape = (v: unknown) => {
+    const s = v == null ? "" : String(v);
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const header = columns.map((c) => c.label).join(",");
+  const body = rows.map((row) => columns.map((c) => escape(row[c.key as keyof T])).join(",")).join("\r\n");
+  const blob = new Blob(["\uFEFF" + header + "\r\n" + body], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/** Download a template CSV with header and 10 sample rows */
+function downloadTemplateCSV(header: string, sampleRows: string[], filename: string) {
+  const body = [header, ...sampleRows].join("\r\n");
+  const blob = new Blob(["\uFEFF" + body], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 const Admin = () => {
   const { user, loading, signOut } = useAuth();
-  const { tenant, tenantId } = useTenant();
+  const { tenant, tenantId, refreshTenant } = useTenant();
   const { showSuccess, showError } = useFeedback();
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
 
@@ -59,8 +99,10 @@ const Admin = () => {
   const createService = useCreateService();
   const updateService = useUpdateService();
   const deleteService = useDeleteService();
+  const createBooking = useCreateBooking();
   const updateBooking = useUpdateBooking();
   const deleteBooking = useDeleteBooking();
+  const queryClient = useQueryClient();
   const createLocation = useCreateLocation();
   const updateLocation = useUpdateLocation();
   const deleteLocationMut = useDeleteLocation();
@@ -79,25 +121,38 @@ const Admin = () => {
   // Service form
   const [editingService, setEditingService] = useState<Service | null>(null);
   const [showServiceForm, setShowServiceForm] = useState(false);
-  const [serviceForm, setServiceForm] = useState({
-    name: "", description: "", duration_minutes: 30, price: 0, category: "",
+  const [serviceForm, setServiceForm] = useState<{
+    name: string; description: string; duration_minutes: number; buffer_minutes: number; price: number; category: string;
+    is_active: boolean; sort_order: number; image_url: string; desktop_image_url: string; mobile_image_url: string;
+    metadata: Record<string, unknown>;
+  }>({
+    name: "", description: "", duration_minutes: 30, buffer_minutes: 0, price: 0, category: "",
     is_active: true, sort_order: 0, image_url: "", desktop_image_url: "", mobile_image_url: "",
+    metadata: {},
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Location form
   const [editingLocation, setEditingLocation] = useState<Location | null>(null);
   const [showLocationForm, setShowLocationForm] = useState(false);
-  const [locationForm, setLocationForm] = useState({
+  const [locationForm, setLocationForm] = useState<{
+    name: string; address: string; city: string; phone: string; email: string; is_active: boolean; sort_order: number; image_url: string;
+    metadata: Record<string, unknown>;
+  }>({
     name: "", address: "", city: "", phone: "", email: "", is_active: true, sort_order: 0, image_url: "",
+    metadata: {},
   });
 
   // Staff form
   const [editingStaffMember, setEditingStaffMember] = useState<Staff | null>(null);
   const [showStaffForm, setShowStaffForm] = useState(false);
-  const [staffForm, setStaffForm] = useState({
+  const [staffForm, setStaffForm] = useState<{
+    name: string; title: string; category: string; bio: string; specialties: string; is_active: boolean; sort_order: number; image_url: string; location_id: string;
+    metadata: Record<string, unknown>;
+  }>({
     name: "", title: "", category: "", bio: "", specialties: "",
     is_active: true, sort_order: 0, image_url: "", location_id: "",
+    metadata: {},
   });
 
   // Category form
@@ -119,15 +174,22 @@ const Admin = () => {
   const { data: analytics, isLoading: loadingAnalytics } = useTenantAnalytics(tenantId, analyticsPeriod);
 
   // Clients
-  const { data: clients, isLoading: loadingClients } = useClients(tenantId);
+  const [clientTagFilter, setClientTagFilter] = useState("");
+  const { data: clients, isLoading: loadingClients } = useClients(tenantId, { tag: clientTagFilter || undefined });
   const createClient = useCreateClient();
   const updateClient = useUpdateClient();
   const deleteClient = useDeleteClient();
   const [showClientForm, setShowClientForm] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [clientForm, setClientForm] = useState({
-    email: "", phone: "", first_name: "", last_name: "", notes: "",
+    email: "", phone: "", first_name: "", last_name: "", notes: "", tags: "" as string | string[],
   });
+  const { data: selectedClient } = useClient(selectedClientId ?? undefined);
+  const { data: clientMembership } = useClientMembership(editingClient?.id);
+  const setClientMembership = useSetClientMembership();
+  const removeClientMembership = useRemoveClientMembership();
+  const [selectedPlanIdForClient, setSelectedPlanIdForClient] = useState<string>("");
 
   // Payments
   const { data: payments, isLoading: loadingPayments } = usePayments(tenantId);
@@ -159,6 +221,7 @@ const Admin = () => {
   // POS
   const { data: posSales, isLoading: loadingPos } = usePosSales(tenantId);
   const { data: posStats } = usePosSaleStats(tenantId, "day");
+  const { data: posStatsWeek } = usePosSaleStats(tenantId, "week");
   const completePosSale = useCompletePosSale();
   const { data: posStockItems } = useStockItems(tenantId, { activeOnly: true });
   const [posCart, setPosCart] = useState<PosCartItem[]>([]);
@@ -166,6 +229,54 @@ const Admin = () => {
   const [showRecentSalesSheet, setShowRecentSalesSheet] = useState(false);
   const [posProductSearch, setPosProductSearch] = useState("");
   const [posPaymentMethod, setPosPaymentMethod] = useState<string>("cash");
+
+  // Waitlist
+  const [waitlistStatusFilter, setWaitlistStatusFilter] = useState<string>("");
+  const [waitlistDateFilter, setWaitlistDateFilter] = useState<string>("");
+  const { data: waitlistEntries, isLoading: loadingWaitlist } = useWaitlist(tenantId, {
+    status: waitlistStatusFilter || undefined,
+    date: waitlistDateFilter || undefined,
+  });
+  const updateWaitlistEntry = useUpdateWaitlistEntry();
+
+  // Membership plans
+  const { data: membershipPlans, isLoading: loadingMembership } = useMembershipPlans(tenantId);
+  const createMembershipPlan = useCreateMembershipPlan();
+  const updateMembershipPlan = useUpdateMembershipPlan();
+  const deleteMembershipPlan = useDeleteMembershipPlan();
+  const [showMembershipForm, setShowMembershipForm] = useState(false);
+  const [editingMembershipPlan, setEditingMembershipPlan] = useState<MembershipPlan | null>(null);
+  const [membershipForm, setMembershipForm] = useState({ name: "", slug: "", description: "", price: 0, billing_interval: "month" as string, is_active: true });
+
+  const handleSaveMembershipPlan = async () => {
+    try {
+      if (editingMembershipPlan) {
+        await updateMembershipPlan.mutateAsync({
+          id: editingMembershipPlan.id,
+          name: membershipForm.name,
+          slug: membershipForm.slug,
+          description: membershipForm.description || null,
+          price: membershipForm.price,
+          billing_interval: membershipForm.billing_interval,
+          is_active: membershipForm.is_active,
+        });
+      } else {
+        await createMembershipPlan.mutateAsync({
+          tenant_id: tenantId!,
+          name: membershipForm.name,
+          slug: membershipForm.slug,
+          description: membershipForm.description || null,
+          price: membershipForm.price,
+          billing_interval: membershipForm.billing_interval,
+          is_active: membershipForm.is_active,
+        });
+      }
+      showSuccess("Saved");
+      setShowMembershipForm(false);
+    } catch {
+      showError("Failed");
+    }
+  };
 
   // Pagination (6 per page)
   const servicesPag = usePagination(services, 6);
@@ -184,6 +295,11 @@ const Admin = () => {
   const [settingsMpesaShortcode, setSettingsMpesaShortcode] = useState("");
   const [settingsMpesaPasskey, setSettingsMpesaPasskey] = useState("");
   const [settingsPayAtVenue, setSettingsPayAtVenue] = useState(true);
+  const [settingsCancelByHours, setSettingsCancelByHours] = useState(24);
+  const [settingsNoShowAfterMinutes, setSettingsNoShowAfterMinutes] = useState(0);
+  const [settingsLogoUrl, setSettingsLogoUrl] = useState("");
+  const [settingsPrimaryColor, setSettingsPrimaryColor] = useState("#000000");
+  const [brandingSaving, setBrandingSaving] = useState(false);
   useEffect(() => {
     if (tab === "settings") {
       setSettingsPaypalClientId(tenantPaymentForm.paypalClientId || "");
@@ -191,13 +307,42 @@ const Admin = () => {
       setSettingsMpesaKey(tenantPaymentForm.mpesaConsumerKey || "");
       setSettingsMpesaShortcode(tenantPaymentForm.mpesaShortcode || "");
       setSettingsPayAtVenue(tenantPaymentForm.payAtVenueEnabled);
+      setSettingsCancelByHours(tenantPaymentForm.cancelByHours ?? 24);
+      setSettingsNoShowAfterMinutes(tenantPaymentForm.noShowAfterMinutes ?? 0);
+      setSettingsLogoUrl(tenant?.logo_url || "");
+      setSettingsPrimaryColor(tenant?.theme_config?.primary_color || "#000000");
     }
-  }, [tab, tenantPaymentForm.paypalClientId, tenantPaymentForm.stripePublishableKey, tenantPaymentForm.mpesaConsumerKey, tenantPaymentForm.mpesaShortcode, tenantPaymentForm.payAtVenueEnabled]);
+  }, [tab, tenant?.logo_url, tenant?.theme_config?.primary_color, tenantPaymentForm.paypalClientId, tenantPaymentForm.stripePublishableKey, tenantPaymentForm.mpesaConsumerKey, tenantPaymentForm.mpesaShortcode, tenantPaymentForm.payAtVenueEnabled, tenantPaymentForm.cancelByHours, tenantPaymentForm.noShowAfterMinutes]);
 
   const stockItemsPag = usePagination(stockItems, 6);
   const locationsPag = usePagination(locations, 6);
   const staffPag = usePagination(staff, 6);
   const schedulesPag = usePagination(schedules, 6);
+  const clientPayments = useMemo(() => (payments ?? []).filter((p: { client_id?: string | null }) => p.client_id === selectedClientId), [payments, selectedClientId]);
+  const recentActivity = useMemo(() => {
+    const items: { id: string; sortAt: string; dateLabel: string; label: string; amountLabel: string }[] = [];
+    (bookings ?? []).slice(0, 20).forEach((b) => {
+      const d = b.booking_date && b.booking_time ? `${b.booking_date}T${b.booking_time}` : b.booking_date ?? "";
+      items.push({
+        id: `b-${b.id}`,
+        sortAt: d || new Date().toISOString(),
+        dateLabel: b.booking_date ? new Date(b.booking_date + "T12:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "2-digit" }) : "—",
+        label: `Booking: ${b.customer_name ?? "—"}`,
+        amountLabel: b.total_price != null ? `$${Number(b.total_price).toFixed(0)}` : "—",
+      });
+    });
+    (payments ?? []).slice(0, 20).forEach((p: { id: string; created_at: string; amount: number; status: string }) => {
+      items.push({
+        id: `p-${p.id}`,
+        sortAt: p.created_at ?? "",
+        dateLabel: p.created_at ? new Date(p.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "2-digit" }) : "—",
+        label: `Payment: ${p.status}`,
+        amountLabel: `$${Number(p.amount).toFixed(0)}`,
+      });
+    });
+    items.sort((a, b) => (b.sortAt > a.sortAt ? 1 : -1));
+    return items.slice(0, 15);
+  }, [bookings, payments]);
   const posStockFiltered = useMemo(() => {
     if (!posStockItems) return [];
     if (!posProductSearch.trim()) return posStockItems;
@@ -211,12 +356,45 @@ const Admin = () => {
   const posSalesPag = usePagination(posSales, 6);
 
   const { data: isPlatformAdmin } = useIsPlatformAdmin();
+  const trialStatus = useTrialStatus();
+  const { data: auditLogs, isLoading: auditLogsLoading } = useAuditLogs(tenantId, 100);
+  const [trialRemovalTriggered, setTrialRemovalTriggered] = useState(false);
+
+  useEffect(() => {
+    if (!trialStatus?.isPastGrace || trialRemovalTriggered) return;
+    setTrialRemovalTriggered(true);
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session?.access_token) return;
+      supabase.functions.invoke("remove-my-expired-trial", {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      }).catch(() => {});
+    });
+  }, [trialStatus?.isPastGrace, trialRemovalTriggered]);
 
   if (loading) return <div className="flex min-h-screen items-center justify-center bg-background font-body text-sm text-muted-foreground">Loading...</div>;
   if (!user) return <Navigate to="/login" replace />;
   // Platform admins can access admin without completing tenant onboarding; tenant owners must complete onboarding (only redirect when we know user is not a platform admin)
   if (isPlatformAdmin === false && tenant?.onboarding_status && tenant.onboarding_status !== "completed" && tenantId) {
     return <Navigate to={`/onboarding?tenant_id=${tenantId}`} replace />;
+  }
+
+  if (trialStatus?.isPastGrace) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-background font-body px-4">
+        <div className="w-full max-w-md rounded-xl border border-border bg-card p-6 text-center">
+          <h1 className="font-display text-lg font-bold text-foreground mb-2">Trial ended</h1>
+          <p className="text-sm text-muted-foreground mb-4">
+            Your free trial has ended and your data has been or will be removed. Upgrade to Starter or Lifetime to keep your business data and continue using Iska Service OS.
+          </p>
+          <Link
+            to="/pricing?expired=1"
+            className="inline-block rounded-full bg-primary px-6 py-2.5 text-sm font-semibold text-primary-foreground hover:bg-primary/90"
+          >
+            Upgrade now
+          </Link>
+        </div>
+      </div>
+    );
   }
 
   const tenantName = tenant?.name || "Iska Service OS";
@@ -239,27 +417,32 @@ const Admin = () => {
   const openNewService = () => {
     setEditingService(null);
     const defaultCat = categories?.[0]?.slug || "";
-    setServiceForm({ name: "", description: "", duration_minutes: 30, price: 0, category: defaultCat, is_active: true, sort_order: 0, image_url: "", desktop_image_url: "", mobile_image_url: "" });
+    setServiceForm({ name: "", description: "", duration_minutes: 30, buffer_minutes: 0, price: 0, category: defaultCat, is_active: true, sort_order: 0, image_url: "", desktop_image_url: "", mobile_image_url: "", metadata: {} });
     setShowServiceForm(true);
   };
   const openEditService = (s: Service) => {
     setEditingService(s);
     setServiceForm({
       name: s.name, description: s.description || "", duration_minutes: s.duration_minutes,
-      price: Number(s.price), category: s.category, is_active: s.is_active, sort_order: s.sort_order,
+      buffer_minutes: s.buffer_minutes ?? 0, price: Number(s.price), category: s.category, is_active: s.is_active, sort_order: s.sort_order,
       image_url: s.image_url || "", desktop_image_url: s.desktop_image_url || "", mobile_image_url: s.mobile_image_url || "",
+      metadata: (s.metadata as Record<string, unknown>) || {},
     });
     setShowServiceForm(true);
   };
   const handleSaveService = async () => {
     if (!serviceForm.name) { showError("Name required"); return; }
     try {
-      const payload = { ...serviceForm, image_url: serviceForm.image_url || null, desktop_image_url: serviceForm.desktop_image_url || null, mobile_image_url: serviceForm.mobile_image_url || null, tenant_id: tenantId, metadata: null, category_id: null };
+      const metadataVal = Object.keys(serviceForm.metadata || {}).length ? serviceForm.metadata : null;
+      const payload = { ...serviceForm, image_url: serviceForm.image_url || null, desktop_image_url: serviceForm.desktop_image_url || null, mobile_image_url: serviceForm.mobile_image_url || null, tenant_id: tenantId, metadata: metadataVal, category_id: null };
       if (editingService) {
         await updateService.mutateAsync({ id: editingService.id, ...payload });
+        await logAuditEvent(supabase, { tenantId, userId: user?.id ?? null, action: "update", tableName: "services", recordId: editingService.id });
         showSuccess("Updated");
       } else {
-        await createService.mutateAsync(payload);
+        const result = await createService.mutateAsync(payload);
+        const id = (result as { id?: string })?.id;
+        if (id) await logAuditEvent(supabase, { tenantId, userId: user?.id ?? null, action: "create", tableName: "services", recordId: id });
         showSuccess("Created");
       }
       setShowServiceForm(false);
@@ -269,22 +452,26 @@ const Admin = () => {
   // Location handlers
   const openNewLocation = () => {
     setEditingLocation(null);
-    setLocationForm({ name: "", address: "", city: "", phone: "", email: "", is_active: true, sort_order: 0, image_url: "" });
+    setLocationForm({ name: "", address: "", city: "", phone: "", email: "", is_active: true, sort_order: 0, image_url: "", metadata: {} });
     setShowLocationForm(true);
   };
   const openEditLocation = (l: Location) => {
     setEditingLocation(l);
-    setLocationForm({ name: l.name, address: l.address || "", city: l.city || "", phone: l.phone || "", email: l.email || "", is_active: l.is_active, sort_order: l.sort_order, image_url: l.image_url || "" });
+    setLocationForm({ name: l.name, address: l.address || "", city: l.city || "", phone: l.phone || "", email: l.email || "", is_active: l.is_active, sort_order: l.sort_order, image_url: l.image_url || "", metadata: (l.metadata as Record<string, unknown>) || {} });
     setShowLocationForm(true);
   };
   const handleSaveLocation = async () => {
     if (!locationForm.name) { showError("Name required"); return; }
     try {
-      const payload = { ...locationForm, address: locationForm.address || null, city: locationForm.city || null, phone: locationForm.phone || null, email: locationForm.email || null, image_url: locationForm.image_url || null, tenant_id: tenantId, metadata: null };
+      const metadataVal = Object.keys(locationForm.metadata || {}).length ? locationForm.metadata : null;
+      const payload = { ...locationForm, address: locationForm.address || null, city: locationForm.city || null, phone: locationForm.phone || null, email: locationForm.email || null, image_url: locationForm.image_url || null, tenant_id: tenantId, metadata: metadataVal };
       if (editingLocation) {
         await updateLocation.mutateAsync({ id: editingLocation.id, ...payload });
+        await logAuditEvent(supabase, { tenantId, userId: user?.id ?? null, action: "update", tableName: "locations", recordId: editingLocation.id });
       } else {
-        await createLocation.mutateAsync(payload);
+        const result = await createLocation.mutateAsync(payload);
+        const id = (result as { id?: string })?.id;
+        if (id) await logAuditEvent(supabase, { tenantId, userId: user?.id ?? null, action: "create", tableName: "locations", recordId: id });
       }
       showSuccess("Saved");
       setShowLocationForm(false);
@@ -295,28 +482,32 @@ const Admin = () => {
   const openNewStaff = () => {
     setEditingStaffMember(null);
     const defaultCat = categories?.[0]?.slug || "";
-    setStaffForm({ name: "", title: "", category: defaultCat, bio: "", specialties: "", is_active: true, sort_order: 0, image_url: "", location_id: "" });
+    setStaffForm({ name: "", title: "", category: defaultCat, bio: "", specialties: "", is_active: true, sort_order: 0, image_url: "", location_id: "", metadata: {} });
     setShowStaffForm(true);
   };
   const openEditStaff = (s: Staff) => {
     setEditingStaffMember(s);
-    setStaffForm({ name: s.name, title: s.title, category: s.category, bio: s.bio || "", specialties: s.specialties?.join(", ") || "", is_active: s.is_active, sort_order: s.sort_order, image_url: s.image_url || "", location_id: s.location_id || "" });
+    setStaffForm({ name: s.name, title: s.title, category: s.category, bio: s.bio || "", specialties: s.specialties?.join(", ") || "", is_active: s.is_active, sort_order: s.sort_order, image_url: s.image_url || "", location_id: s.location_id || "", metadata: (s.metadata as Record<string, unknown>) || {} });
     setShowStaffForm(true);
   };
   const handleSaveStaff = async () => {
     if (!staffForm.name) { showError("Name required"); return; }
     try {
+      const metadataVal = Object.keys(staffForm.metadata || {}).length ? staffForm.metadata : null;
       const payload = {
         name: staffForm.name, title: staffForm.title, category: staffForm.category,
         bio: staffForm.bio || null, specialties: staffForm.specialties ? staffForm.specialties.split(",").map(s => s.trim()).filter(Boolean) : null,
         is_active: staffForm.is_active, sort_order: staffForm.sort_order,
         image_url: staffForm.image_url || null, location_id: staffForm.location_id || null, user_id: null,
-        tenant_id: tenantId, metadata: null,
+        tenant_id: tenantId, metadata: metadataVal,
       };
       if (editingStaffMember) {
         await updateStaffMut.mutateAsync({ id: editingStaffMember.id, ...payload });
+        await logAuditEvent(supabase, { tenantId, userId: user?.id ?? null, action: "update", tableName: "staff", recordId: editingStaffMember.id });
       } else {
-        await createStaff.mutateAsync(payload);
+        const result = await createStaff.mutateAsync(payload);
+        const id = (result as { id?: string })?.id;
+        if (id) await logAuditEvent(supabase, { tenantId, userId: user?.id ?? null, action: "create", tableName: "staff", recordId: id });
       }
       showSuccess("Saved");
       setShowStaffForm(false);
@@ -374,7 +565,43 @@ const Admin = () => {
   };
 
   const handleBookingStatus = async (id: string, status: string) => {
-    try { await updateBooking.mutateAsync({ id, status }); showSuccess(`Booking ${status}`); } catch { showError("Failed"); }
+    try {
+      await updateBooking.mutateAsync({ id, status });
+      await logAuditEvent(supabase, { tenantId, userId: user?.id ?? null, action: "update", tableName: "bookings", recordId: id, changes: { status } });
+      const b = bookings?.find((x) => x.id === id);
+      if (b?.customer_email) {
+        if (status === "cancelled") {
+          supabase.functions
+            .invoke("send-booking-cancellation", {
+              body: {
+                booking: {
+                  customer_email: b.customer_email,
+                  customer_name: b.customer_name,
+                  booking_date: b.booking_date,
+                  booking_time: b.booking_time,
+                },
+                tenant: { name: tenant?.name || "Our Business" },
+              },
+            })
+            .catch(() => {});
+        } else if (status === "no_show") {
+          supabase.functions
+            .invoke("send-booking-no-show", {
+              body: {
+                booking: {
+                  customer_email: b.customer_email,
+                  customer_name: b.customer_name,
+                  booking_date: b.booking_date,
+                  booking_time: b.booking_time,
+                },
+                tenant: { name: tenant?.name || "Our Business" },
+              },
+            })
+            .catch(() => {});
+        }
+      }
+      showSuccess(`Booking ${status}`);
+    } catch { showError("Failed"); }
   };
 
   const tabs: { key: Tab; label: string; icon: React.ReactNode }[] = [
@@ -389,6 +616,9 @@ const Admin = () => {
     { key: "locations", label: "Locations", icon: <MapPin className="h-3.5 w-3.5" /> },
     { key: "staff", label: "Staff", icon: <Users className="h-3.5 w-3.5" /> },
     { key: "schedules", label: "Schedules", icon: <Clock className="h-3.5 w-3.5" /> },
+    { key: "waitlist", label: "Waitlist", icon: <ListTodo className="h-3.5 w-3.5" /> },
+    { key: "membership", label: "Membership", icon: <Tag className="h-3.5 w-3.5" /> },
+    { key: "audit", label: "Audit", icon: <FileText className="h-3.5 w-3.5" /> },
     { key: "settings", label: "Settings", icon: <Settings className="h-3.5 w-3.5" /> },
   ];
 
@@ -526,6 +756,42 @@ const Admin = () => {
                     </div>
                   </div>
                 )}
+
+                {/* Location performance */}
+                {analytics.locationStats.length > 0 && (
+                  <div className="rounded-xl border border-border bg-card p-4">
+                    <h3 className="mb-4 text-sm font-semibold text-card-foreground">Revenue by Location</h3>
+                    <div className="space-y-2">
+                      {analytics.locationStats.slice(0, 5).map((loc) => (
+                        <div key={loc.location_id} className="flex items-center justify-between rounded-lg border border-border bg-background p-2">
+                          <span className="text-xs font-medium text-foreground">{loc.location_name}</span>
+                          <div className="flex items-center gap-3 text-xs">
+                            <span className="text-muted-foreground">{loc.booking_count} bookings</span>
+                            <span className="font-bold text-card-foreground">${loc.revenue.toFixed(0)}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Recent activity: bookings + payments merged by date */}
+                <div className="rounded-xl border border-border bg-card p-4">
+                  <h3 className="mb-4 text-sm font-semibold text-card-foreground">Recent activity</h3>
+                  {recentActivity.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No recent bookings or payments.</p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {recentActivity.map((item) => (
+                        <li key={item.id} className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 py-2 text-xs">
+                          <span className="text-muted-foreground shrink-0">{item.dateLabel}</span>
+                          <span className="min-w-0 truncate text-card-foreground">{item.label}</span>
+                          <span className="shrink-0 font-medium text-card-foreground">{item.amountLabel}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="rounded-xl border border-border bg-card p-8 text-center">
@@ -539,18 +805,151 @@ const Admin = () => {
         {/* ========= CLIENTS ========= */}
         {tab === "clients" && (
           <div>
-            <div className="mb-4 flex items-center justify-between sm:mb-6">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 sm:mb-6">
               <h2 className="font-display text-lg font-bold text-foreground sm:text-xl">Clients</h2>
-              <button
-                onClick={() => {
-                  setEditingClient(null);
-                  setClientForm({ email: "", phone: "", first_name: "", last_name: "", notes: "" });
-                  setShowClientForm(true);
-                }}
-                className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground hover:scale-105 transition-transform sm:px-4 sm:text-xs"
-              >
-                <Plus className="h-3.5 w-3.5" />Add Client
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Filter by tag"
+                  value={clientTagFilter}
+                  onChange={(e) => setClientTagFilter(e.target.value)}
+                  className="w-32 rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <button
+                  type="button"
+                  onClick={() => clients?.length && exportToCSV(
+                    clients.map((c) => ({
+                      first_name: c.first_name ?? "",
+                      last_name: c.last_name ?? "",
+                      email: c.email ?? "",
+                      phone: c.phone ?? "",
+                      notes: c.notes ?? "",
+                    })),
+                    [
+                      { key: "first_name", label: "First name" },
+                      { key: "last_name", label: "Last name" },
+                      { key: "email", label: "Email" },
+                      { key: "phone", label: "Phone" },
+                      { key: "notes", label: "Notes" },
+                    ],
+                    `clients-export-${new Date().toISOString().slice(0, 10)}.csv`
+                  )}
+                  disabled={!clients?.length}
+                  className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50 sm:px-4"
+                >
+                  Export CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const header = "First name,Last name,Email,Phone,Notes";
+                    const rows = [
+                      "Jane,Doe,jane@example.com,+1234567890,Preferred stylist: Alex",
+                      "John,Smith,john@example.com,+1987654321,VIP client",
+                      "Maria,Garcia,maria@example.com,+1555123456,Allergies: none",
+                      "David,Lee,david@example.com,+1555987654,Prefers morning slots",
+                      "Sarah,Johnson,sarah@example.com,+1555111222,First visit",
+                      "James,Wilson,james@example.com,+1555333444,Regular monthly",
+                      "Emma,Brown,emma@example.com,+1555666777,Sensitive scalp",
+                      "Michael,Davis,michael@example.com,+1555888999,Beard trim only",
+                      "Olivia,Miller,olivia@example.com,+1555222333,Kids cut",
+                      "William,Taylor,william@example.com,+1555444555,Corporate client",
+                    ];
+                    downloadTemplateCSV(header, rows, "clients-import-template.csv");
+                  }}
+                  className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground sm:px-4"
+                >
+                  Download template
+                </button>
+                <label className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground cursor-pointer sm:px-4">
+                  Import CSV
+                  <input
+                    type="file"
+                    accept=".csv"
+                    className="sr-only"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!file || !tenantId) return;
+                      const text = await file.text();
+                      const lines = text.replace(/\r\n/g, "\n").split("\n").filter((l) => l.trim());
+                      if (lines.length < 2) {
+                        showError("Import", "CSV must have a header row and at least one data row.");
+                        return;
+                      }
+                      const parseCSVLine = (line: string): string[] => {
+                        const out: string[] = [];
+                        let cur = "";
+                        let inQuotes = false;
+                        for (let j = 0; j < line.length; j++) {
+                          const ch = line[j];
+                          if (ch === '"') {
+                            inQuotes = !inQuotes;
+                            continue;
+                          }
+                          if (!inQuotes && ch === ",") {
+                            out.push(cur.trim());
+                            cur = "";
+                            continue;
+                          }
+                          cur += ch;
+                        }
+                        out.push(cur.trim());
+                        return out;
+                      };
+                      const rawHeaders = parseCSVLine(lines[0]).map((h) => h.toLowerCase().replace(/\s+/g, "_"));
+                      const get = (row: string[], key: string) => {
+                        const i = rawHeaders.indexOf(key);
+                        if (i === -1) return "";
+                        const cell = row[i];
+                        return cell != null ? String(cell).trim() : "";
+                      };
+                      let imported = 0;
+                      let skipped = 0;
+                      const existingEmails = new Set((clients ?? []).map((c) => (c.email || "").toLowerCase()).filter(Boolean));
+                      for (let i = 1; i < lines.length; i++) {
+                        const row = parseCSVLine(lines[i]);
+                        const first_name = get(row, "first_name") || get(row, "firstname");
+                        const last_name = get(row, "last_name") || get(row, "lastname");
+                        const email = get(row, "email");
+                        const phone = get(row, "phone");
+                        const notes = get(row, "notes");
+                        if (!first_name && !last_name && !email) continue;
+                        const emailLower = email.toLowerCase();
+                        if (email && existingEmails.has(emailLower)) {
+                          skipped++;
+                          continue;
+                        }
+                        try {
+                          await createClient.mutateAsync({
+                            tenant_id: tenantId,
+                            first_name: first_name || null,
+                            last_name: last_name || null,
+                            email: email || null,
+                            phone: phone || null,
+                            notes: notes || null,
+                          });
+                          imported++;
+                          if (email) existingEmails.add(emailLower);
+                        } catch {
+                          skipped++;
+                        }
+                      }
+                      showSuccess("Import", `Imported ${imported} client(s).${skipped ? ` ${skipped} skipped.` : ""}`);
+                    }}
+                  />
+                </label>
+                <button
+                  onClick={() => {
+                    setEditingClient(null);
+                    setClientForm({ email: "", phone: "", first_name: "", last_name: "", notes: "", tags: "" });
+                    setShowClientForm(true);
+                  }}
+                  className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground hover:scale-[1.02] transition-transform sm:px-4 sm:text-xs"
+                >
+                  <Plus className="h-3.5 w-3.5" />Add Client
+                </button>
+              </div>
             </div>
             {loadingClients ? (
               <p className="text-sm text-muted-foreground">Loading...</p>
@@ -562,7 +961,14 @@ const Admin = () => {
             ) : (
               <div className="space-y-3">
                 {clientsPag.paginatedItems.map((c) => (
-                  <div key={c.id} className="group rounded-xl border border-border bg-card p-4 hover:shadow-md transition-shadow">
+                  <div
+                    key={c.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setSelectedClientId(c.id)}
+                    onKeyDown={(e) => e.key === "Enter" && setSelectedClientId(c.id)}
+                    className="group cursor-pointer rounded-xl border border-border bg-card p-4 hover:shadow-md transition-shadow"
+                  >
                     <div className="flex items-center justify-between">
                       <div className="flex-1 min-w-0">
                         <h3 className="text-sm font-semibold text-card-foreground">
@@ -578,7 +984,8 @@ const Admin = () => {
                       </div>
                       <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
-                          onClick={() => {
+                          onClick={(e) => {
+                            e.stopPropagation();
                             setEditingClient(c);
                             setClientForm({
                               email: c.email || "",
@@ -586,6 +993,7 @@ const Admin = () => {
                               first_name: c.first_name || "",
                               last_name: c.last_name || "",
                               notes: c.notes || "",
+                              tags: Array.isArray(c.tags) ? c.tags.join(", ") : (c.tags as string) || "",
                             });
                             setShowClientForm(true);
                           }}
@@ -594,7 +1002,8 @@ const Admin = () => {
                           <Edit2 className="h-3.5 w-3.5" />
                         </button>
                         <button
-                          onClick={() => {
+                          onClick={(e) => {
+                            e.stopPropagation();
                             setConfirmState({
                               open: true,
                               title: "Delete client",
@@ -620,24 +1029,109 @@ const Admin = () => {
                 ))}
               </div>
             )}
+            {/* Client detail sheet */}
+            <Sheet open={!!selectedClientId} onOpenChange={(open) => !open && setSelectedClientId(null)}>
+              <SheetContent side="right" className="w-full max-w-md overflow-y-auto">
+                {selectedClient && (
+                  <>
+                    <SheetHeader>
+                      <SheetTitle>
+                        {selectedClient.first_name || selectedClient.last_name
+                          ? `${selectedClient.first_name || ""} ${selectedClient.last_name || ""}`.trim()
+                          : "Client"}
+                      </SheetTitle>
+                    </SheetHeader>
+                    <div className="mt-4 space-y-4">
+                      {(selectedClient.email || selectedClient.phone) && (
+                        <p className="text-sm text-muted-foreground">
+                          {selectedClient.email}
+                          {selectedClient.email && selectedClient.phone && " · "}
+                          {selectedClient.phone}
+                        </p>
+                      )}
+                      <p className="text-[10px] text-muted-foreground">
+                        {selectedClient.total_bookings} bookings · ${Number(selectedClient.total_spent).toFixed(0)} spent
+                      </p>
+                      <div>
+                        <label className="text-[11px] font-medium text-muted-foreground">Notes</label>
+                        <textarea
+                          defaultValue={selectedClient.notes ?? ""}
+                          onBlur={(e) => {
+                            const v = e.target.value.trim();
+                            if (v !== (selectedClient.notes ?? "")) {
+                              updateClient.mutate({ id: selectedClient.id, notes: v || null });
+                            }
+                          }}
+                          rows={3}
+                          className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                        />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-semibold text-card-foreground mb-2">Bookings</h4>
+                        {(selectedClient as { bookings?: Array<{ id: string; booking_date: string; booking_time: string; services?: { name: string }; staff?: { name: string }; total_price: number }> }).bookings?.length ? (
+                          <ul className="space-y-1.5 text-[11px] text-muted-foreground">
+                            {((selectedClient as { bookings?: Array<{ id: string; booking_date: string; booking_time: string; services?: { name: string }; staff?: { name: string }; total_price: number }> }).bookings ?? []).map((b: any) => (
+                              <li key={b.id}>
+                                {b.booking_date} {b.booking_time} · {b.services?.name ?? "—"} · {b.staff?.name ?? "—"} · ${Number(b.total_price ?? 0).toFixed(0)}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="text-[11px] text-muted-foreground">No bookings</p>
+                        )}
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-semibold text-card-foreground mb-2">Payments</h4>
+                        {clientPayments.length ? (
+                          <ul className="space-y-1.5 text-[11px] text-muted-foreground">
+                            {clientPayments.map((p: { id: string; amount: number; status: string; payment_method?: string | null; created_at: string }) => (
+                              <li key={p.id}>
+                                ${Number(p.amount).toFixed(2)} · {p.status} {p.payment_method ? `· ${p.payment_method}` : ""} · {new Date(p.created_at).toLocaleDateString()}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="text-[11px] text-muted-foreground">No payments</p>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </SheetContent>
+            </Sheet>
           </div>
         )}
 
         {/* ========= INVENTORY ========= */}
         {tab === "inventory" && (
           <div>
-            <div className="mb-4 flex items-center justify-between sm:mb-6">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 sm:mb-6">
               <h2 className="font-display text-lg font-bold text-foreground sm:text-xl">Inventory</h2>
-              <button
-                onClick={() => {
-                  setEditingStock(null);
-                  setStockForm({ name: "", sku: "", description: "", quantity: 0, unit: "each", cost_price: 0, sell_price: 0, min_stock: 0, category: "", is_active: true });
-                  setShowStockForm(true);
-                }}
-                className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground hover:scale-105 transition-transform sm:px-4 sm:text-xs"
-              >
-                <Plus className="h-3.5 w-3.5" />Add Item
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={() => stockItems?.length && exportToCSV(stockItems.map((i) => ({ name: i.name, sku: i.sku ?? "", description: i.description ?? "", quantity: i.quantity, unit: i.unit ?? "each", cost_price: i.cost_price, sell_price: i.sell_price, min_stock: i.min_stock ?? 0, category: i.category ?? "", is_active: i.is_active })), [{ key: "name", label: "Name" }, { key: "sku", label: "SKU" }, { key: "description", label: "Description" }, { key: "quantity", label: "Quantity" }, { key: "unit", label: "Unit" }, { key: "cost_price", label: "Cost price" }, { key: "sell_price", label: "Sell price" }, { key: "min_stock", label: "Min stock" }, { key: "category", label: "Category" }, { key: "is_active", label: "Active" }], `inventory-${new Date().toISOString().slice(0, 10)}.csv`)} disabled={!stockItems?.length} className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50 sm:px-4">Export CSV</button>
+                <button type="button" onClick={() => { const header = "Name,SKU,Description,Quantity,Unit,Cost price,Sell price,Min stock,Category,Active"; const rows = ["Shampoo 500ml,SH-001,Professional shampoo,50,each,5.00,12.00,10,salon,true", "Conditioner 500ml,CO-001,Deep conditioning,45,each,5.50,14.00,10,salon,true", "Hair spray 300ml,HS-001,Strong hold spray,30,each,3.00,8.00,5,salon,true", "Nail polish red,NP-RED,Classic red,24,each,2.00,6.00,5,nails,true", "Nail polish nude,NP-NUDE,Nude shade,24,each,2.00,6.00,5,nails,true", "Face mask clay,FM-001,Cleansing clay mask,20,each,4.00,15.00,5,skin,true", "Massage oil 1L,MO-001,Relaxing oil,15,each,12.00,28.00,3,spa,true", "Hand towel,TWL-H,White hand towel,100,each,2.50,0,20,linen,true", "Cape,CAPE-1,Client cape,25,each,15.00,0,5,linen,true", "Comb set,COMB-S,Professional combs,50,each,1.50,5.00,10,tools,true"]; downloadTemplateCSV(header, rows, "inventory-import-template.csv"); }} className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground sm:px-4">Download template</button>
+                <label className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground cursor-pointer sm:px-4">Import CSV
+                  <input type="file" accept=".csv" className="sr-only" onChange={async (e) => {
+                    const file = e.target.files?.[0]; e.target.value = ""; if (!file || !tenantId) return;
+                    const text = await file.text(); const lines = text.replace(/\r\n/g, "\n").split("\n").filter((l) => l.trim()); if (lines.length < 2) { showError("Import", "CSV must have header and at least one row."); return; }
+                    const parseLine = (line: string): string[] => { const out: string[] = []; let cur = ""; let inQ = false; for (let j = 0; j < line.length; j++) { const ch = line[j]; if (ch === '"') { inQ = !inQ; continue; } if (!inQ && ch === ",") { out.push(cur.trim()); cur = ""; continue; } cur += ch; } out.push(cur.trim()); return out; };
+                    const rawHeaders = parseLine(lines[0]).map((h) => h.toLowerCase().replace(/\s+/g, "_")); const get = (row: string[], k: string) => { const i = rawHeaders.indexOf(k); return i >= 0 && row[i] != null ? String(row[i]).trim() : ""; };
+                    let imported = 0, skipped = 0;
+                    for (let i = 1; i < lines.length; i++) { const row = parseLine(lines[i]); const name = get(row, "name"); if (!name) { skipped++; continue; } const qty = parseFloat(get(row, "quantity")) || 0; const sellPrice = parseFloat(get(row, "sell_price")) || 0; if (sellPrice < 0) { skipped++; continue; } try { await createStockItem.mutateAsync({ name, sku: get(row, "sku") || null, description: get(row, "description") || null, quantity: qty, unit: get(row, "unit") || "each", cost_price: parseFloat(get(row, "cost_price")) || 0, sell_price: sellPrice, min_stock: parseFloat(get(row, "min_stock")) || 0, category: get(row, "category") || null, tenant_id: tenantId!, is_active: get(row, "active") !== "false" && get(row, "active") !== "0" }); imported++; } catch { skipped++; } }
+                    showSuccess("Import", `Imported ${imported} stock item(s).${skipped ? ` ${skipped} skipped.` : ""}`);
+                  }} />
+                </label>
+                <button
+                  onClick={() => {
+                    setEditingStock(null);
+                    setStockForm({ name: "", sku: "", description: "", quantity: 0, unit: "each", cost_price: 0, sell_price: 0, min_stock: 0, category: "", is_active: true });
+                    setShowStockForm(true);
+                  }}
+                  className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground hover:scale-105 transition-transform sm:px-4 sm:text-xs"
+                >
+                  <Plus className="h-3.5 w-3.5" />Add Item
+                </button>
+              </div>
             </div>
             {loadingStock ? (
               <p className="text-sm text-muted-foreground">Loading...</p>
@@ -784,8 +1278,10 @@ const Admin = () => {
 
             <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[1fr_20rem]">
               <div className="flex flex-col gap-4">
-                {posStats && (
+                {(posStats || posStatsWeek) && (
                   <div className="grid grid-cols-2 gap-4">
+                    {posStats && (
+                    <>
                     <div className="group rounded-xl border border-emerald-200/60 bg-gradient-to-br from-emerald-50 to-emerald-100/80 p-4 shadow-sm transition-all hover:shadow-md dark:border-emerald-900/40 dark:from-emerald-950/50 dark:to-emerald-900/30">
                       <div className="flex items-center gap-3">
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-700 dark:text-emerald-400">
@@ -808,6 +1304,34 @@ const Admin = () => {
                         </div>
                       </div>
                     </div>
+                    </>
+                    )}
+                    {posStatsWeek && (
+                    <>
+                    <div className="group rounded-xl border border-blue-200/60 bg-gradient-to-br from-blue-50 to-blue-100/80 p-4 shadow-sm dark:border-blue-900/40 dark:from-blue-950/50 dark:to-blue-900/30">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-500/20 text-blue-700 dark:text-blue-400">
+                          <Receipt className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-medium uppercase tracking-wider text-blue-700/80 dark:text-blue-400/80">This week</p>
+                          <p className="mt-0.5 text-xl font-bold text-blue-900 dark:text-blue-100">{posStatsWeek.count} sales</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="group rounded-xl border border-blue-200/60 bg-gradient-to-br from-blue-50 to-blue-100/80 p-4 shadow-sm dark:border-blue-900/40 dark:from-blue-950/50 dark:to-blue-900/30">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-500/20 text-blue-700 dark:text-blue-400">
+                          <DollarSign className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <p className="text-[10px] font-medium uppercase tracking-wider text-blue-700/80 dark:text-blue-400/80">Week revenue</p>
+                          <p className="mt-0.5 text-xl font-bold text-blue-900 dark:text-blue-100">${posStatsWeek.total.toFixed(0)}</p>
+                        </div>
+                      </div>
+                    </div>
+                    </>
+                    )}
                   </div>
                 )}
                 <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
@@ -978,17 +1502,65 @@ const Admin = () => {
         {tab === "payments" && (
           <div>
             <div className="mb-4 flex items-center justify-between sm:mb-6">
+              <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="font-display text-lg font-bold text-foreground sm:text-xl">Payments</h2>
-              <button
-                onClick={() => {
-                  setEditingPayment(null);
-                  setPaymentForm({ booking_id: "", client_id: "", amount: 0, payment_method: "cash", status: "succeeded" });
-                  setShowPaymentForm(true);
-                }}
-                className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground hover:scale-105 transition-transform sm:px-4 sm:text-xs"
-              >
-                <Plus className="h-3.5 w-3.5" />Add Payment
-              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => payments?.length && exportToCSV(
+                    payments.map((p) => ({
+                      amount: p.amount,
+                      payment_method: p.payment_method,
+                      status: p.status,
+                      created_at: p.created_at,
+                    })),
+                    [
+                      { key: "amount", label: "Amount" },
+                      { key: "payment_method", label: "Method" },
+                      { key: "status", label: "Status" },
+                      { key: "created_at", label: "Date" },
+                    ],
+                    `payments-${new Date().toISOString().slice(0, 10)}.csv`
+                  )}
+                  disabled={!payments?.length}
+                  className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50 sm:px-4"
+                >
+                  Export CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const header = "Amount,Method,Status,Date";
+                    const rows = [
+                      "25.00,cash,succeeded,2025-02-01T10:00:00",
+                      "45.50,card,succeeded,2025-02-02T11:30:00",
+                      "30.00,cash,succeeded,2025-02-03T09:00:00",
+                      "60.00,card,succeeded,2025-02-04T14:00:00",
+                      "22.00,cash,succeeded,2025-02-05T16:30:00",
+                      "38.00,card,refunded,2025-02-06T10:00:00",
+                      "55.00,card,succeeded,2025-02-07T12:00:00",
+                      "28.00,cash,succeeded,2025-02-08T15:00:00",
+                      "42.00,card,succeeded,2025-02-09T11:00:00",
+                      "35.00,cash,pending,2025-02-10T13:30:00",
+                    ];
+                    downloadTemplateCSV(header, rows, "payments-import-template.csv");
+                  }}
+                  className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground sm:px-4"
+                >
+                  Download template
+                </button>
+                <button
+                  onClick={() => {
+                    setEditingPayment(null);
+                    setPaymentForm({ booking_id: "", client_id: "", amount: 0, payment_method: "cash", status: "succeeded" });
+                    setShowPaymentForm(true);
+                  }}
+                  className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground hover:scale-105 transition-transform sm:px-4 sm:text-xs"
+                >
+                  <Plus className="h-3.5 w-3.5" />Add Payment
+                </button>
+              </div>
+            </div>
             </div>
             {paymentStats && (
               <div className="mb-4 grid grid-cols-3 gap-3">
@@ -1059,16 +1631,246 @@ const Admin = () => {
           </div>
         )}
 
-        {/* ========= SETTINGS (Payment for bookings) ========= */}
+        {/* ========= WAITLIST ========= */}
+        {tab === "waitlist" && (
+          <div>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 sm:mb-6">
+              <h2 className="font-display text-lg font-bold text-foreground sm:text-xl">Waitlist</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={waitlistStatusFilter}
+                  onChange={(e) => setWaitlistStatusFilter(e.target.value)}
+                  className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="">All statuses</option>
+                  <option value="pending">Pending</option>
+                  <option value="notified">Notified</option>
+                  <option value="converted">Converted</option>
+                  <option value="expired">Expired</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+                <input
+                  type="date"
+                  value={waitlistDateFilter}
+                  onChange={(e) => setWaitlistDateFilter(e.target.value)}
+                  className="rounded-lg border border-border bg-background px-3 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+              </div>
+            </div>
+            {loadingWaitlist ? (
+              <p className="text-sm text-muted-foreground">Loading waitlist...</p>
+            ) : !waitlistEntries?.length ? (
+              <p className="text-sm text-muted-foreground">No waitlist entries.</p>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {waitlistEntries.map((entry: WaitlistEntry) => (
+                  <div key={entry.id} className="rounded-xl border border-border bg-card p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="font-medium text-card-foreground">{entry.customer_name}</p>
+                        {entry.customer_email && <p className="text-[11px] text-muted-foreground">{entry.customer_email}</p>}
+                        <p className="text-[11px] text-muted-foreground">{entry.customer_phone}</p>
+                        <p className="mt-1 text-[11px] text-muted-foreground">Desired: {entry.desired_date}{entry.desired_time_start ? ` ${entry.desired_time_start}` : ""}</p>
+                      </div>
+                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium uppercase ${
+                        entry.status === "pending" ? "bg-amber-500/20 text-amber-700 dark:text-amber-400" :
+                        entry.status === "notified" ? "bg-blue-500/20 text-blue-700 dark:text-blue-400" :
+                        entry.status === "converted" ? "bg-green-500/20 text-green-700 dark:text-green-400" :
+                        "bg-muted text-muted-foreground"
+                      }`}>{entry.status}</span>
+                    </div>
+                    {entry.status === "pending" && (
+                      <div className="mt-3 flex flex-wrap gap-1">
+                        <button
+                          type="button"
+                          onClick={() => updateWaitlistEntry.mutateAsync({ id: entry.id, status: "notified", notified_at: new Date().toISOString() }).then(() => showSuccess("Marked as notified")).catch(() => showError("Failed"))}
+                          disabled={updateWaitlistEntry.isPending}
+                          className="rounded-lg border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                        >
+                          Mark notified
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => updateWaitlistEntry.mutateAsync({ id: entry.id, status: "converted" }).then(() => showSuccess("Marked as converted")).catch(() => showError("Failed"))}
+                          disabled={updateWaitlistEntry.isPending}
+                          className="rounded-lg border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                        >
+                          Converted
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => updateWaitlistEntry.mutateAsync({ id: entry.id, status: "cancelled" }).then(() => showSuccess("Cancelled")).catch(() => showError("Failed"))}
+                          disabled={updateWaitlistEntry.isPending}
+                          className="rounded-lg border border-destructive/50 px-2 py-1 text-[11px] font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ========= MEMBERSHIP PLANS ========= */}
+        {tab === "membership" && (
+          <div>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 sm:mb-6">
+              <h2 className="font-display text-lg font-bold text-foreground sm:text-xl">Membership plans</h2>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingMembershipPlan(null);
+                  setMembershipForm({ name: "", slug: "", description: "", price: 0, billing_interval: "month", is_active: true });
+                  setShowMembershipForm(true);
+                }}
+                className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground hover:scale-[1.02] transition-transform sm:px-4 sm:text-xs"
+              >
+                <Plus className="h-3.5 w-3.5" /> Add plan
+              </button>
+            </div>
+            {loadingMembership ? (
+              <p className="text-sm text-muted-foreground">Loading...</p>
+            ) : !membershipPlans?.length ? (
+              <p className="text-sm text-muted-foreground">No membership plans. Add one to offer client memberships.</p>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {membershipPlans.map((plan) => (
+                  <div key={plan.id} className="group rounded-xl border border-border bg-card p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <h3 className="font-semibold text-card-foreground">{plan.name}</h3>
+                        <p className="text-[11px] text-muted-foreground">${Number(plan.price).toFixed(0)}/{plan.billing_interval === "year" ? "yr" : plan.billing_interval === "one_time" ? "once" : "mo"}</p>
+                        {plan.description && <p className="mt-1 text-xs text-muted-foreground">{plan.description}</p>}
+                      </div>
+                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button onClick={() => { setEditingMembershipPlan(plan); setMembershipForm({ name: plan.name, slug: plan.slug, description: plan.description || "", price: Number(plan.price), billing_interval: plan.billing_interval, is_active: plan.is_active }); setShowMembershipForm(true); }} className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"><Edit2 className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => setConfirmState({ open: true, title: "Delete plan", description: "Remove this membership plan?", onConfirm: async () => { try { await deleteMembershipPlan.mutateAsync(plan.id); showSuccess("Deleted"); } catch { showError("Failed"); throw new Error(); } } })} className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
+                      </div>
+                    </div>
+                    {!plan.is_active && <span className="mt-2 inline-block rounded bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">Inactive</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+            {showMembershipForm && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4 backdrop-blur-sm">
+                <div className="animate-slide-in-right w-full max-w-md rounded-2xl bg-card p-5 shadow-2xl sm:p-6">
+                  <div className="mb-4 flex items-center justify-between">
+                    <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">{editingMembershipPlan ? "Edit plan" : "New plan"}</h3>
+                    <button onClick={() => setShowMembershipForm(false)} className="text-muted-foreground hover:text-card-foreground"><X className="h-5 w-5" /></button>
+                  </div>
+                  <div className="space-y-3">
+                    <div><label className={labelCls}>Name</label><input type="text" value={membershipForm.name} onChange={(e) => setMembershipForm(f => ({ ...f, name: e.target.value, slug: e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") }))} className={inputCls} /></div>
+                    <div><label className={labelCls}>Slug</label><input type="text" value={membershipForm.slug} onChange={(e) => setMembershipForm(f => ({ ...f, slug: e.target.value }))} className={inputCls} /></div>
+                    <div><label className={labelCls}>Description</label><input type="text" value={membershipForm.description} onChange={(e) => setMembershipForm(f => ({ ...f, description: e.target.value }))} className={inputCls} /></div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div><label className={labelCls}>Price ($)</label><input type="number" step="0.01" value={membershipForm.price} onChange={(e) => setMembershipForm(f => ({ ...f, price: parseFloat(e.target.value) || 0 }))} className={inputCls} /></div>
+                      <div><label className={labelCls}>Billing</label><select value={membershipForm.billing_interval} onChange={(e) => setMembershipForm(f => ({ ...f, billing_interval: e.target.value }))} className={inputCls}><option value="month">Monthly</option><option value="year">Yearly</option><option value="one_time">One-time</option></select></div>
+                    </div>
+                    <div className="flex items-center gap-2"><input type="checkbox" id="plan_active" checked={membershipForm.is_active} onChange={(e) => setMembershipForm(f => ({ ...f, is_active: e.target.checked }))} className="h-4 w-4 rounded border-border text-primary accent-primary" /><label htmlFor="plan_active" className="text-xs text-card-foreground">Active</label></div>
+                    <button
+                      type="button"
+                      onClick={handleSaveMembershipPlan}
+                      disabled={createMembershipPlan.isPending || updateMembershipPlan.isPending || !membershipForm.name || !membershipForm.slug}
+                      className="w-full rounded-full bg-primary py-2.5 text-xs font-semibold uppercase tracking-wider text-primary-foreground disabled:opacity-50 sm:text-sm"
+                    >
+                      {editingMembershipPlan ? "Update" : "Create"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ========= AUDIT LOG ========= */}
+        {tab === "audit" && (
+          <div>
+            <div className="mb-4 flex items-center justify-between sm:mb-6">
+              <h2 className="font-display text-lg font-bold text-foreground sm:text-xl">Audit log</h2>
+            </div>
+            {auditLogsLoading ? (
+              <p className="text-sm text-muted-foreground">Loading audit log...</p>
+            ) : auditLogs && auditLogs.length > 0 ? (
+              <div className="overflow-x-auto rounded-xl border border-border bg-card">
+                <table className="w-full text-left text-xs sm:text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/50">
+                      <th className="px-3 py-2 font-medium text-muted-foreground">Time</th>
+                      <th className="px-3 py-2 font-medium text-muted-foreground">Action</th>
+                      <th className="px-3 py-2 font-medium text-muted-foreground">Table</th>
+                      <th className="px-3 py-2 font-medium text-muted-foreground">Record</th>
+                      <th className="px-3 py-2 font-medium text-muted-foreground hidden sm:cell">Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {auditLogs.map((log) => (
+                      <tr key={log.id} className="border-b border-border last:border-0">
+                        <td className="px-3 py-2 text-muted-foreground">{new Date(log.created_at).toLocaleString()}</td>
+                        <td className="px-3 py-2 font-medium text-card-foreground">{log.action}</td>
+                        <td className="px-3 py-2 text-muted-foreground">{log.table_name}</td>
+                        <td className="px-3 py-2 text-muted-foreground font-mono text-[10px]">{log.record_id ? `${String(log.record_id).slice(0, 8)}…` : "—"}</td>
+                        <td className="px-3 py-2 text-muted-foreground hidden sm:cell">{log.changes ? JSON.stringify(log.changes).slice(0, 40) + (JSON.stringify(log.changes).length > 40 ? "…" : "") : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No audit entries yet. Create, update, or delete services, locations, staff, or bookings to see activity here.</p>
+            )}
+          </div>
+        )}
+
+        {/* ========= SETTINGS (Branding + Payment) ========= */}
         {tab === "settings" && (
           <div>
-            <h2 className="font-display text-lg font-bold text-foreground sm:text-xl mb-4 sm:mb-6">Payment settings</h2>
-            <p className="text-xs text-muted-foreground mb-4">
-              Add credentials for any option you want to accept. Once set, that option goes live on your booking page. Funds go to your account.
-            </p>
+            <h2 className="font-display text-lg font-bold text-foreground sm:text-xl mb-4 sm:mb-6">Settings</h2>
             <div className="max-w-md space-y-6">
               <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+                <h3 className="text-sm font-semibold text-card-foreground flex items-center gap-1.5"><Palette className="h-3.5 w-3.5" /> Branding</h3>
+                <p className="text-[11px] text-muted-foreground">Logo and primary color appear on your booking page and in the app.</p>
+                <div>
+                  <label className={labelCls}>Logo URL</label>
+                  <input type="url" value={settingsLogoUrl} onChange={(e) => setSettingsLogoUrl(e.target.value)} placeholder="https://..." className={inputCls} />
+                  {settingsLogoUrl && <img src={settingsLogoUrl} alt="Logo preview" className="mt-1 h-10 rounded border border-border object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />}
+                </div>
+                <div>
+                  <label className={labelCls}>Primary color</label>
+                  <div className="flex gap-2 items-center mt-1">
+                    <input type="color" value={settingsPrimaryColor} onChange={(e) => setSettingsPrimaryColor(e.target.value)} className="h-9 w-14 rounded border border-border cursor-pointer" />
+                    <input type="text" value={settingsPrimaryColor} onChange={(e) => setSettingsPrimaryColor(e.target.value)} className={inputCls} placeholder="#000000" />
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={brandingSaving || !tenantId}
+                  onClick={async () => {
+                    if (!tenantId) return;
+                    setBrandingSaving(true);
+                    try {
+                      const themeConfig = { ...(tenant?.theme_config || {}), primary_color: settingsPrimaryColor };
+                      const { error } = await supabase.from("tenants").update({ logo_url: settingsLogoUrl.trim() || null, theme_config: themeConfig }).eq("id", tenantId);
+                      if (error) throw error;
+                      await refreshTenant();
+                      showSuccess("Saved", "Branding saved.");
+                    } catch (e) {
+                      showError("Failed", e instanceof Error ? e.message : "Could not save branding.");
+                    } finally {
+                      setBrandingSaving(false);
+                    }
+                  }}
+                  className="rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {brandingSaving ? "Saving..." : "Save branding"}
+                </button>
+              </div>
+              <div className="rounded-xl border border-border bg-card p-4 space-y-3">
                 <h3 className="text-sm font-semibold text-card-foreground">PayPal</h3>
+                <p className="text-[11px] text-muted-foreground">Add credentials for any option you want. Once set, that option goes live on your booking page. Funds go to your account.</p>
                 <div>
                   <label className={labelCls}>PayPal Client ID</label>
                   <input type="text" value={settingsPaypalClientId} onChange={(e) => setSettingsPaypalClientId(e.target.value)} placeholder="From PayPal Developer Dashboard" className={inputCls} />
@@ -1131,6 +1933,8 @@ const Admin = () => {
                       mpesaShortcode: settingsMpesaShortcode.trim(),
                       mpesaPasskey: settingsMpesaPasskey.trim() || undefined,
                       payAtVenueEnabled: settingsPayAtVenue,
+                      cancelByHours: settingsCancelByHours,
+                      noShowAfterMinutes: settingsNoShowAfterMinutes,
                     });
                     setSettingsPaypalSecret("");
                     setSettingsStripeSecret("");
@@ -1153,9 +1957,24 @@ const Admin = () => {
         {/* ========= SERVICES ========= */}
         {tab === "services" && (
           <div>
-            <div className="mb-4 flex items-center justify-between sm:mb-6">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 sm:mb-6">
               <h2 className="font-display text-lg font-bold text-foreground sm:text-xl">Services</h2>
-              <button onClick={openNewService} className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground hover:scale-105 transition-transform sm:px-4 sm:text-xs"><Plus className="h-3.5 w-3.5" />Add</button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={() => services?.length && exportToCSV(services.map((s) => ({ name: s.name, description: s.description ?? "", duration_minutes: s.duration_minutes, price: s.price, category_name: categories?.find((c) => c.id === s.category_id || c.slug === s.category)?.name ?? s.category, sort_order: s.sort_order, is_active: s.is_active })), [{ key: "name", label: "Name" }, { key: "description", label: "Description" }, { key: "duration_minutes", label: "Duration (min)" }, { key: "price", label: "Price" }, { key: "category_name", label: "Category name" }, { key: "sort_order", label: "Sort order" }, { key: "is_active", label: "Active" }], `services-${new Date().toISOString().slice(0, 10)}.csv`)} disabled={!services?.length} className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50 sm:px-4">Export CSV</button>
+                <button type="button" onClick={() => { const header = "Name,Description,Duration (min),Price,Category name,Sort order,Active"; const rows = ["Haircut,Classic cut,30,25,Barber,0,true", "Beard trim,Full beard shape,15,12,Barber,1,true", "Hair color,Full color treatment,90,85,Color,2,true", "Blow dry,Wash and blow dry,30,35,Styling,3,true", "Manicure,Classic manicure,45,28,Nails,4,true", "Pedicure,Spa pedicure,60,45,Nails,5,true", "Facial,Deep cleanse facial,50,55,Skin,6,true", "Massage,60 min relaxation,60,75,Spa,7,true", "Kids cut,Under 12,20,18,Barber,8,true", "Consultation,Free 15 min,15,0,General,9,true"]; downloadTemplateCSV(header, rows, "services-import-template.csv"); }} className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground sm:px-4">Download template</button>
+                <label className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground cursor-pointer sm:px-4">Import CSV
+                  <input type="file" accept=".csv" className="sr-only" onChange={async (e) => {
+                    const file = e.target.files?.[0]; e.target.value = ""; if (!file || !tenantId) return;
+                    const text = await file.text(); const lines = text.replace(/\r\n/g, "\n").split("\n").filter((l) => l.trim()); if (lines.length < 2) { showError("Import", "CSV must have header and at least one row."); return; }
+                    const parseLine = (line: string): string[] => { const out: string[] = []; let cur = ""; let inQ = false; for (let j = 0; j < line.length; j++) { const ch = line[j]; if (ch === '"') { inQ = !inQ; continue; } if (!inQ && ch === ",") { out.push(cur.trim()); cur = ""; continue; } cur += ch; } out.push(cur.trim()); return out; };
+                    const rawHeaders = parseLine(lines[0]).map((h) => h.toLowerCase().replace(/\s+/g, "_")); const get = (row: string[], k: string) => { const i = rawHeaders.indexOf(k); return i >= 0 && row[i] != null ? String(row[i]).trim() : ""; };
+                    let imported = 0, skipped = 0;
+                    for (let i = 1; i < lines.length; i++) { const row = parseLine(lines[i]); const name = get(row, "name"); if (!name) { skipped++; continue; } const catName = get(row, "category_name") || get(row, "category"); const cat = catName ? categories?.find((c) => c.name.toLowerCase() === catName.toLowerCase() || c.slug.toLowerCase() === catName.toLowerCase()) : null; try { await createService.mutateAsync({ name, description: get(row, "description") || null, duration_minutes: parseInt(get(row, "duration_min") || get(row, "duration_minutes"), 10) || 30, price: parseFloat(get(row, "price")) || 0, category: cat?.slug ?? "", category_id: cat?.id ?? null, tenant_id: tenantId!, is_active: get(row, "active") !== "false" && get(row, "active") !== "0", sort_order: parseInt(get(row, "sort_order"), 10) || 0, image_url: null, desktop_image_url: null, mobile_image_url: null, metadata: null }); imported++; } catch { skipped++; } }
+                    showSuccess("Import", `Imported ${imported} service(s).${skipped ? ` ${skipped} skipped.` : ""}`);
+                  }} />
+                </label>
+                <button onClick={openNewService} className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground hover:scale-105 transition-transform sm:px-4 sm:text-xs"><Plus className="h-3.5 w-3.5" />Add</button>
+              </div>
             </div>
             {loadingServices ? <p className="text-sm text-muted-foreground">Loading...</p> : (
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -1169,7 +1988,7 @@ const Admin = () => {
                       </div>
                       <div className="ml-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button onClick={() => openEditService(s)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"><Edit2 className="h-3.5 w-3.5" /></button>
-                        <button onClick={() => setConfirmState({ open: true, title: "Delete service", description: "Delete this service?", onConfirm: async () => { try { await deleteService.mutateAsync(s.id); showSuccess("Deleted", "Service deleted."); } catch { showError("Failed", "Could not delete."); throw new Error(); } } })} className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => setConfirmState({ open: true, title: "Delete service", description: "Delete this service?", onConfirm: async () => { try { await deleteService.mutateAsync(s.id); await logAuditEvent(supabase, { tenantId, userId: user?.id ?? null, action: "delete", tableName: "services", recordId: s.id }); showSuccess("Deleted", "Service deleted."); } catch { showError("Failed", "Could not delete."); throw new Error(); } } })} className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
                       </div>
                     </div>
                     <div className="mt-3 flex items-center gap-2 text-[11px]">
@@ -1192,9 +2011,24 @@ const Admin = () => {
         {/* ========= CATEGORIES ========= */}
         {tab === "categories" && (
           <div>
-            <div className="mb-4 flex items-center justify-between sm:mb-6">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 sm:mb-6">
               <h2 className="font-display text-lg font-bold text-foreground sm:text-xl">Service Categories</h2>
-              <button onClick={openNewCategory} className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground hover:scale-105 transition-transform sm:px-4 sm:text-xs"><Plus className="h-3.5 w-3.5" />Add</button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={() => categories?.length && exportToCSV(categories.map((c) => ({ name: c.name, slug: c.slug, description: c.description ?? "", tag_color: c.tag_color ?? "", sort_order: c.sort_order, is_active: c.is_active })), [{ key: "name", label: "Name" }, { key: "slug", label: "Slug" }, { key: "description", label: "Description" }, { key: "tag_color", label: "Tag color" }, { key: "sort_order", label: "Sort order" }, { key: "is_active", label: "Active" }], `categories-${new Date().toISOString().slice(0, 10)}.csv`)} disabled={!categories?.length} className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50 sm:px-4">Export CSV</button>
+                <button type="button" onClick={() => { const header = "Name,Slug,Description,Tag color,Sort order,Active"; const rows = ["Barber,barber,Haircuts and shaves,#3b82f6,0,true", "Color,color,Hair color and highlights,#ec4899,1,true", "Styling,styling,Blow dry and styling,#8b5cf6,2,true", "Nails,nails,Manicure and pedicure,#f59e0b,3,true", "Skin,skin,Facials and skin care,#10b981,4,true", "Spa,spa,Massage and body,#06b6d4,5,true", "Kids,kids,Services for children,#6366f1,6,true", "Bridal,bridal,Bridal packages,#be185d,7,true", "Men,men,Mens grooming,#0ea5e9,8,true", "General,general,Consultations and other,#64748b,9,true"]; downloadTemplateCSV(header, rows, "categories-import-template.csv"); }} className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground sm:px-4">Download template</button>
+                <label className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground cursor-pointer sm:px-4">Import CSV
+                  <input type="file" accept=".csv" className="sr-only" onChange={async (e) => {
+                    const file = e.target.files?.[0]; e.target.value = ""; if (!file || !tenantId) return;
+                    const text = await file.text(); const lines = text.replace(/\r\n/g, "\n").split("\n").filter((l) => l.trim()); if (lines.length < 2) { showError("Import", "CSV must have header and at least one row."); return; }
+                    const parseLine = (line: string): string[] => { const out: string[] = []; let cur = ""; let inQ = false; for (let j = 0; j < line.length; j++) { const ch = line[j]; if (ch === '"') { inQ = !inQ; continue; } if (!inQ && ch === ",") { out.push(cur.trim()); cur = ""; continue; } cur += ch; } out.push(cur.trim()); return out; };
+                    const rawHeaders = parseLine(lines[0]).map((h) => h.toLowerCase().replace(/\s+/g, "_")); const get = (row: string[], k: string) => { const i = rawHeaders.indexOf(k); return i >= 0 && row[i] != null ? String(row[i]).trim() : ""; };
+                    const slugify = (n: string) => n.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "cat"; const existingSlugs = new Set((categories ?? []).map((c) => c.slug)); let imported = 0, skipped = 0;
+                    for (let i = 1; i < lines.length; i++) { const row = parseLine(lines[i]); const name = get(row, "name"); if (!name) { skipped++; continue; } const slug = get(row, "slug") || slugify(name); if (existingSlugs.has(slug)) { skipped++; continue; } try { await createCategory.mutateAsync({ name, slug, tenant_id: tenantId!, description: get(row, "description") || null, tag_color: get(row, "tag_color") || null, is_active: get(row, "active") !== "false" && get(row, "active") !== "0", sort_order: parseInt(get(row, "sort_order"), 10) || 0 }); existingSlugs.add(slug); imported++; } catch { skipped++; } }
+                    queryClient.invalidateQueries({ queryKey: ["all-service-categories"] }); showSuccess("Import", `Imported ${imported} category(ies).${skipped ? ` ${skipped} skipped.` : ""}`);
+                  }} />
+                </label>
+                <button onClick={openNewCategory} className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground hover:scale-105 transition-transform sm:px-4 sm:text-xs"><Plus className="h-3.5 w-3.5" />Add</button>
+              </div>
             </div>
             {loadingCategories ? <p className="text-sm text-muted-foreground">Loading...</p> : !categories?.length ? (
               <div className="rounded-xl border border-border bg-card p-8 text-center">
@@ -1233,7 +2067,140 @@ const Admin = () => {
         {/* ========= BOOKINGS ========= */}
         {tab === "bookings" && (
           <div>
-            <h2 className="mb-4 font-display text-lg font-bold text-foreground sm:mb-6 sm:text-xl">Bookings</h2>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 sm:mb-6">
+              <h2 className="font-display text-lg font-bold text-foreground sm:text-xl">Bookings</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => bookings?.length && exportToCSV(
+                    bookings.map((b) => ({
+                      customer_name: b.customer_name,
+                      customer_email: b.customer_email,
+                      customer_phone: b.customer_phone,
+                      booking_date: b.booking_date,
+                      booking_time: b.booking_time,
+                      status: b.status,
+                      total_price: b.total_price,
+                    })),
+                    [
+                      { key: "customer_name", label: "Customer" },
+                      { key: "customer_email", label: "Email" },
+                      { key: "customer_phone", label: "Phone" },
+                      { key: "booking_date", label: "Date" },
+                      { key: "booking_time", label: "Time" },
+                      { key: "status", label: "Status" },
+                      { key: "total_price", label: "Total" },
+                    ],
+                    `bookings-${new Date().toISOString().slice(0, 10)}.csv`
+                  )}
+                  disabled={!bookings?.length}
+                  className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50 sm:px-4"
+                >
+                  Export CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const header = "Customer,Email,Phone,Date,Time,Service name,Location name,Staff name,Total price,Status";
+                    const rows = ["Jane Doe,jane@example.com,+1234567890,2025-02-15,10:00,Haircut,Main Street,Alex,25,confirmed", "John Smith,john@example.com,+1987654321,2025-02-15,11:00,Beard trim,Main Street,Alex,12,confirmed", "Maria Garcia,maria@example.com,+1555123456,2025-02-16,09:30,Hair color,Downtown,Sam,85,pending", "David Lee,david@example.com,+1555987654,2025-02-16,14:00,Haircut,Downtown,Jordan,25,confirmed", "Sarah Johnson,sarah@example.com,+1555111222,2025-02-17,10:00,Manicure,Main Street,Sam,28,confirmed", "James Wilson,james@example.com,+1555333444,2025-02-17,15:00,Massage,Spa branch,Jordan,75,confirmed", "Emma Brown,emma@example.com,+1555666777,2025-02-18,11:00,Facial,Main Street,Alex,55,confirmed", "Michael Davis,michael@example.com,+1555888999,2025-02-18,16:00,Beard trim,Downtown,Alex,12,cancelled", "Olivia Miller,olivia@example.com,+1555222333,2025-02-19,09:00,Kids cut,Main Street,Sam,18,confirmed", "William Taylor,william@example.com,+1555444555,2025-02-19,13:00,Haircut,Spa branch,Jordan,25,confirmed"];
+                    downloadTemplateCSV(header, rows, "bookings-import-template.csv");
+                  }}
+                  className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground sm:px-4"
+                >
+                  Download template
+                </button>
+                <label className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground cursor-pointer sm:px-4">
+                  Import CSV
+                  <input
+                    type="file"
+                    accept=".csv"
+                    className="sr-only"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!file || !tenantId) return;
+                      const text = await file.text();
+                      const lines = text.replace(/\r\n/g, "\n").split("\n").filter((l) => l.trim());
+                      if (lines.length < 2) {
+                        showError("Import", "CSV must have a header row and at least one data row.");
+                        return;
+                      }
+                      const parseCSVLine = (line: string): string[] => {
+                        const out: string[] = [];
+                        let cur = "";
+                        let inQuotes = false;
+                        for (let j = 0; j < line.length; j++) {
+                          const ch = line[j];
+                          if (ch === '"') { inQuotes = !inQuotes; continue; }
+                          if (!inQuotes && ch === ",") { out.push(cur.trim()); cur = ""; continue; }
+                          cur += ch;
+                        }
+                        out.push(cur.trim());
+                        return out;
+                      };
+                      const rawHeaders = parseCSVLine(lines[0]).map((h) => h.toLowerCase().replace(/\s+/g, "_"));
+                      const get = (row: string[], key: string) => {
+                        const i = rawHeaders.indexOf(key);
+                        if (i === -1) return "";
+                        const cell = row[i];
+                        return cell != null ? String(cell).trim() : "";
+                      };
+                      let imported = 0;
+                      let skipped = 0;
+                      for (let i = 1; i < lines.length; i++) {
+                        const row = parseCSVLine(lines[i]);
+                        const customer_name = get(row, "customer") || get(row, "customer_name");
+                        const customer_email = get(row, "email");
+                        const customer_phone = get(row, "phone");
+                        let booking_date = get(row, "date") || get(row, "booking_date");
+                        let booking_time = get(row, "time") || get(row, "booking_time");
+                        const service_name = get(row, "service_name") || get(row, "service");
+                        const location_name = get(row, "location_name") || get(row, "location");
+                        const staff_name = get(row, "staff_name") || get(row, "staff");
+                        const total_price = parseFloat(get(row, "total_price") || get(row, "total") || "0") || 0;
+                        const status = get(row, "status") || "confirmed";
+                        if (!customer_name.trim() || !booking_date.trim()) {
+                          skipped++;
+                          continue;
+                        }
+                        if (booking_date.includes("/")) {
+                          const parts = booking_date.split("/");
+                          if (parts.length >= 3) booking_date = `${parts[2]}-${parts[0].padStart(2, "0")}-${parts[1].padStart(2, "0")}`;
+                        }
+                        if (booking_time && !/^\d{1,2}:\d{2}/.test(booking_time)) {
+                          const match = booking_time.match(/(\d{1,2}):(\d{2})/);
+                          if (match) booking_time = `${match[1].padStart(2, "0")}:${match[2]}:00`;
+                          else booking_time = "09:00:00";
+                        } else if (booking_time && booking_time.length === 5) booking_time = booking_time + ":00";
+                        const service_id = service_name ? (services?.find((s) => s.name.toLowerCase() === service_name.toLowerCase())?.id ?? null) : null;
+                        const location_id = location_name ? (locations?.find((l) => l.name.toLowerCase() === location_name.toLowerCase())?.id ?? null) : null;
+                        const staff_id = staff_name ? (staff?.find((s) => s.name.toLowerCase() === staff_name.toLowerCase())?.id ?? null) : null;
+                        try {
+                          await createBooking.mutateAsync({
+                            tenant_id: tenantId,
+                            customer_name: customer_name.trim(),
+                            customer_email: customer_email || null,
+                            customer_phone: customer_phone || null,
+                            booking_date: booking_date.trim(),
+                            booking_time: (booking_time || "09:00").trim(),
+                            service_id,
+                            location_id,
+                            staff_id,
+                            total_price,
+                            status: status || "confirmed",
+                            notes: null,
+                          });
+                          imported++;
+                        } catch {
+                          skipped++;
+                        }
+                      }
+                      showSuccess("Import", `Imported ${imported} booking(s).${skipped ? ` ${skipped} skipped.` : ""}`);
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
             {loadingBookings ? <p className="text-sm text-muted-foreground">Loading...</p> : !bookings?.length ? <p className="text-sm text-muted-foreground">No bookings yet.</p> : (
               <div className="space-y-3">
                 {bookingsPag.paginatedItems.map((b) => {
@@ -1254,15 +2221,16 @@ const Admin = () => {
                         </div>
                         <div className="flex items-center gap-2">
                           <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
-                            b.status === "confirmed" ? "bg-primary/10 text-primary" : b.status === "cancelled" ? "bg-destructive/10 text-destructive" : "bg-secondary text-secondary-foreground"
-                          }`}>{b.status}</span>
+                            b.status === "confirmed" ? "bg-primary/10 text-primary" : b.status === "cancelled" ? "bg-destructive/10 text-destructive" : b.status === "no_show" ? "bg-amber-500/15 text-amber-700 dark:text-amber-400" : "bg-secondary text-secondary-foreground"
+                          }`}>{b.status === "no_show" ? "No-show" : b.status}</span>
                           {b.total_price && <span className="text-xs font-bold text-card-foreground">${Number(b.total_price).toFixed(0)}</span>}
                           <div className="relative group/actions">
                             <button className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary"><ChevronDown className="h-3.5 w-3.5" /></button>
                             <div className="absolute right-0 top-full z-10 hidden min-w-[120px] rounded-lg border border-border bg-card p-1 shadow-lg group-hover/actions:block">
                               <button onClick={() => handleBookingStatus(b.id, "confirmed")} className="w-full rounded-md px-3 py-1.5 text-left text-[11px] hover:bg-secondary">Confirm</button>
+                              <button onClick={() => handleBookingStatus(b.id, "no_show")} className="w-full rounded-md px-3 py-1.5 text-left text-[11px] hover:bg-secondary">No-show</button>
                               <button onClick={() => handleBookingStatus(b.id, "cancelled")} className="w-full rounded-md px-3 py-1.5 text-left text-[11px] hover:bg-secondary">Cancel</button>
-                              <button onClick={() => setConfirmState({ open: true, title: "Delete booking", description: "Delete this booking?", onConfirm: async () => { try { await deleteBooking.mutateAsync(b.id); showSuccess("Deleted", "Booking deleted."); } catch { showError("Failed", "Could not delete."); throw new Error(); } } })} className="w-full rounded-md px-3 py-1.5 text-left text-[11px] text-destructive hover:bg-destructive/10">Delete</button>
+                              <button onClick={() => setConfirmState({ open: true, title: "Delete booking", description: "Delete this booking?", onConfirm: async () => { try { await deleteBooking.mutateAsync(b.id); await logAuditEvent(supabase, { tenantId, userId: user?.id ?? null, action: "delete", tableName: "bookings", recordId: b.id }); showSuccess("Deleted", "Booking deleted."); } catch { showError("Failed", "Could not delete."); throw new Error(); } } })} className="w-full rounded-md px-3 py-1.5 text-left text-[11px] text-destructive hover:bg-destructive/10">Delete</button>
                             </div>
                           </div>
                         </div>
@@ -1279,9 +2247,24 @@ const Admin = () => {
         {/* ========= LOCATIONS ========= */}
         {tab === "locations" && (
           <div>
-            <div className="mb-4 flex items-center justify-between sm:mb-6">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 sm:mb-6">
               <h2 className="font-display text-lg font-bold text-foreground sm:text-xl">Locations</h2>
-              <button onClick={openNewLocation} className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground hover:scale-105 transition-transform sm:px-4 sm:text-xs"><Plus className="h-3.5 w-3.5" />Add</button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={() => locations?.length && exportToCSV(locations.map((l) => ({ name: l.name, address: l.address ?? "", city: l.city ?? "", phone: l.phone ?? "", email: l.email ?? "", sort_order: l.sort_order, is_active: l.is_active })), [{ key: "name", label: "Name" }, { key: "address", label: "Address" }, { key: "city", label: "City" }, { key: "phone", label: "Phone" }, { key: "email", label: "Email" }, { key: "sort_order", label: "Sort order" }, { key: "is_active", label: "Active" }], `locations-${new Date().toISOString().slice(0, 10)}.csv`)} disabled={!locations?.length} className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50 sm:px-4">Export CSV</button>
+                <button type="button" onClick={() => { const header = "Name,Address,City,Phone,Email,Sort order,Active"; const rows = ["Main Street,123 Main St,Springfield,+1234567890,main@salon.com,0,true", "Downtown,456 Center Ave,Springfield,+1234567891,downtown@salon.com,1,true", "Spa branch,789 Oak Rd,Riverside,+1234567892,spa@salon.com,2,true", "Mall location,100 Mall Dr,Springfield,+1234567893,mall@salon.com,3,true", "Airport kiosk,200 Terminal Way,Springfield,+1234567894,airport@salon.com,4,true", "University,300 Campus Blvd,Riverside,+1234567895,uni@salon.com,5,true", "Westside,400 West St,Springfield,+1234567896,west@salon.com,6,true", "Eastside,500 East Ave,Riverside,+1234567897,east@salon.com,7,true", "North branch,600 North Rd,Springfield,+1234567898,north@salon.com,8,true", "South branch,700 South Blvd,Riverside,+1234567899,south@salon.com,9,true"]; downloadTemplateCSV(header, rows, "locations-import-template.csv"); }} className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground sm:px-4">Download template</button>
+                <label className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground cursor-pointer sm:px-4">Import CSV
+                  <input type="file" accept=".csv" className="sr-only" onChange={async (e) => {
+                    const file = e.target.files?.[0]; e.target.value = ""; if (!file || !tenantId) return;
+                    const text = await file.text(); const lines = text.replace(/\r\n/g, "\n").split("\n").filter((l) => l.trim()); if (lines.length < 2) { showError("Import", "CSV must have header and at least one row."); return; }
+                    const parseLine = (line: string): string[] => { const out: string[] = []; let cur = ""; let inQ = false; for (let j = 0; j < line.length; j++) { const ch = line[j]; if (ch === '"') { inQ = !inQ; continue; } if (!inQ && ch === ",") { out.push(cur.trim()); cur = ""; continue; } cur += ch; } out.push(cur.trim()); return out; };
+                    const rawHeaders = parseLine(lines[0]).map((h) => h.toLowerCase().replace(/\s+/g, "_")); const get = (row: string[], k: string) => { const i = rawHeaders.indexOf(k); return i >= 0 && row[i] != null ? String(row[i]).trim() : ""; };
+                    let imported = 0, skipped = 0;
+                    for (let i = 1; i < lines.length; i++) { const row = parseLine(lines[i]); const name = get(row, "name"); if (!name) { skipped++; continue; } try { await createLocation.mutateAsync({ name, address: get(row, "address") || null, city: get(row, "city") || null, phone: get(row, "phone") || null, email: get(row, "email") || null, tenant_id: tenantId!, is_active: get(row, "active") !== "false" && get(row, "active") !== "0", sort_order: parseInt(get(row, "sort_order"), 10) || 0, image_url: null, metadata: null }); imported++; } catch { skipped++; } }
+                    showSuccess("Import", `Imported ${imported} location(s).${skipped ? ` ${skipped} skipped.` : ""}`);
+                  }} />
+                </label>
+                <button onClick={openNewLocation} className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground hover:scale-105 transition-transform sm:px-4 sm:text-xs"><Plus className="h-3.5 w-3.5" />Add</button>
+              </div>
             </div>
             {loadingLocations ? <p className="text-sm text-muted-foreground">Loading...</p> : (
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -1295,7 +2278,7 @@ const Admin = () => {
                       </div>
                       <div className="ml-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button onClick={() => openEditLocation(l)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"><Edit2 className="h-3.5 w-3.5" /></button>
-                        <button onClick={() => setConfirmState({ open: true, title: "Delete location", description: "Delete this location?", onConfirm: async () => { try { await deleteLocationMut.mutateAsync(l.id); showSuccess("Deleted", "Location deleted."); } catch { showError("Failed", "Could not delete."); throw new Error(); } } })} className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => setConfirmState({ open: true, title: "Delete location", description: "Delete this location?", onConfirm: async () => { try { await deleteLocationMut.mutateAsync(l.id); await logAuditEvent(supabase, { tenantId, userId: user?.id ?? null, action: "delete", tableName: "locations", recordId: l.id }); showSuccess("Deleted", "Location deleted."); } catch { showError("Failed", "Could not delete."); throw new Error(); } } })} className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
                       </div>
                     </div>
                     {!l.is_active && <span className="mt-2 inline-block rounded bg-destructive/10 px-1.5 py-0.5 text-[10px] font-medium text-destructive">Inactive</span>}
@@ -1309,9 +2292,24 @@ const Admin = () => {
         {/* ========= STAFF ========= */}
         {tab === "staff" && (
           <div>
-            <div className="mb-4 flex items-center justify-between sm:mb-6">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 sm:mb-6">
               <h2 className="font-display text-lg font-bold text-foreground sm:text-xl">Staff</h2>
-              <button onClick={openNewStaff} className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground hover:scale-105 transition-transform sm:px-4 sm:text-xs"><Plus className="h-3.5 w-3.5" />Add</button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={() => staff?.length && exportToCSV(staff.map((s) => ({ name: s.name, title: s.title ?? "", category: s.category ?? "", bio: s.bio ?? "", location_name: locations?.find((l) => l.id === s.location_id)?.name ?? "", sort_order: s.sort_order, is_active: s.is_active })), [{ key: "name", label: "Name" }, { key: "title", label: "Title" }, { key: "category", label: "Category (slug)" }, { key: "bio", label: "Bio" }, { key: "location_name", label: "Location name" }, { key: "sort_order", label: "Sort order" }, { key: "is_active", label: "Active" }], `staff-${new Date().toISOString().slice(0, 10)}.csv`)} disabled={!staff?.length} className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50 sm:px-4">Export CSV</button>
+                <button type="button" onClick={() => { const header = "Name,Title,Category (slug),Bio,Location name,Sort order,Active"; const rows = ["Alex,Senior Barber,barber,10+ years experience,Main Street,0,true", "Sam,Color Specialist,color,Certified colorist,Downtown,1,true", "Jordan,Stylist,styling,Blow dry expert,Main Street,2,true", "Casey,Nail Tech,nails,Manicure and nail art,Main Street,3,true", "Riley,Esthetician,skin,Facials and skincare,Spa branch,4,true", "Morgan,Massage Therapist,spa,Swedish and deep tissue,Spa branch,5,true", "Jamie,Barber,barber,Mens cuts and beard,Main Street,6,true", "Quinn,Junior Stylist,styling,Training under Jordan,Downtown,7,true", "Reese,Receptionist,general,Front desk and booking,Main Street,8,true", "Taylor,Salon Manager,general,Operations and client care,Main Street,9,true"]; downloadTemplateCSV(header, rows, "staff-import-template.csv"); }} className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground sm:px-4">Download template</button>
+                <label className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground cursor-pointer sm:px-4">Import CSV
+                  <input type="file" accept=".csv" className="sr-only" onChange={async (e) => {
+                    const file = e.target.files?.[0]; e.target.value = ""; if (!file || !tenantId) return;
+                    const text = await file.text(); const lines = text.replace(/\r\n/g, "\n").split("\n").filter((l) => l.trim()); if (lines.length < 2) { showError("Import", "CSV must have header and at least one row."); return; }
+                    const parseLine = (line: string): string[] => { const out: string[] = []; let cur = ""; let inQ = false; for (let j = 0; j < line.length; j++) { const ch = line[j]; if (ch === '"') { inQ = !inQ; continue; } if (!inQ && ch === ",") { out.push(cur.trim()); cur = ""; continue; } cur += ch; } out.push(cur.trim()); return out; };
+                    const rawHeaders = parseLine(lines[0]).map((h) => h.toLowerCase().replace(/\s+/g, "_")); const get = (row: string[], k: string) => { const i = rawHeaders.indexOf(k); return i >= 0 && row[i] != null ? String(row[i]).trim() : ""; };
+                    const defaultCat = categories?.[0]?.slug ?? ""; let imported = 0, skipped = 0;
+                    for (let i = 1; i < lines.length; i++) { const row = parseLine(lines[i]); const name = get(row, "name"); if (!name) { skipped++; continue; } const locName = get(row, "location_name") || get(row, "location"); const location_id = locName ? (locations?.find((l) => l.name.toLowerCase() === locName.toLowerCase())?.id ?? null) : null; const catInput = get(row, "category"); const catSlug = (catInput && categories?.find((c) => c.slug === catInput || c.name.toLowerCase() === catInput.toLowerCase())?.slug) ?? defaultCat; try { await createStaff.mutateAsync({ name, title: get(row, "title") || null, category: catSlug, bio: get(row, "bio") || null, specialties: null, tenant_id: tenantId!, is_active: get(row, "active") !== "false" && get(row, "active") !== "0", sort_order: parseInt(get(row, "sort_order"), 10) || 0, image_url: null, location_id, user_id: null, metadata: null }); imported++; } catch { skipped++; } }
+                    showSuccess("Import", `Imported ${imported} staff.${skipped ? ` ${skipped} skipped.` : ""}`);
+                  }} />
+                </label>
+                <button onClick={openNewStaff} className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground hover:scale-105 transition-transform sm:px-4 sm:text-xs"><Plus className="h-3.5 w-3.5" />Add</button>
+              </div>
             </div>
             {loadingStaff ? <p className="text-sm text-muted-foreground">Loading...</p> : (
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -1331,7 +2329,7 @@ const Admin = () => {
                       </div>
                       <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button onClick={() => openEditStaff(s)} className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"><Edit2 className="h-3.5 w-3.5" /></button>
-                        <button onClick={() => setConfirmState({ open: true, title: "Delete staff", description: "Delete this staff member?", onConfirm: async () => { try { await deleteStaffMut.mutateAsync(s.id); showSuccess("Deleted", "Staff member deleted."); } catch { showError("Failed", "Could not delete."); throw new Error(); } } })} className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => setConfirmState({ open: true, title: "Delete staff", description: "Delete this staff member?", onConfirm: async () => { try { await deleteStaffMut.mutateAsync(s.id); await logAuditEvent(supabase, { tenantId, userId: user?.id ?? null, action: "delete", tableName: "staff", recordId: s.id }); showSuccess("Deleted", "Staff member deleted."); } catch { showError("Failed", "Could not delete."); throw new Error(); } } })} className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
                       </div>
                     </div>
                     {s.specialties && <div className="mt-2 flex flex-wrap gap-1">{s.specialties.map((sp) => <span key={sp} className="rounded bg-secondary px-1.5 py-0.5 text-[9px] text-muted-foreground">{sp}</span>)}</div>}
@@ -1346,9 +2344,24 @@ const Admin = () => {
         {/* ========= SCHEDULES ========= */}
         {tab === "schedules" && (
           <div>
-            <div className="mb-4 flex items-center justify-between sm:mb-6">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 sm:mb-6">
               <h2 className="font-display text-lg font-bold text-foreground sm:text-xl">Staff Schedules</h2>
-              <button onClick={openNewSchedule} className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground hover:scale-105 transition-transform sm:px-4 sm:text-xs"><Plus className="h-3.5 w-3.5" />Add</button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={() => schedules?.length && exportToCSV(schedules.map((s) => ({ staff_name: staff?.find((st) => st.id === s.staff_id)?.name ?? "", day_of_week: DAYS[s.day_of_week], start_time: s.start_time?.slice(0, 5) ?? "", end_time: s.end_time?.slice(0, 5) ?? "", is_available: s.is_available })), [{ key: "staff_name", label: "Staff name" }, { key: "day_of_week", label: "Day" }, { key: "start_time", label: "Start time" }, { key: "end_time", label: "End time" }, { key: "is_available", label: "Available" }], `schedules-${new Date().toISOString().slice(0, 10)}.csv`)} disabled={!schedules?.length} className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50 sm:px-4">Export CSV</button>
+                <button type="button" onClick={() => { const header = "Staff name,Day,Start time,End time,Available"; const rows = ["Alex,Monday,09:00,17:00,true", "Alex,Tuesday,09:00,17:00,true", "Sam,Wednesday,10:00,18:00,true", "Jordan,Thursday,09:00,17:00,true", "Casey,Friday,08:00,16:00,true", "Riley,Saturday,09:00,15:00,true", "Morgan,Monday,09:00,17:00,true", "Jamie,Tuesday,10:00,18:00,true", "Quinn,Wednesday,09:00,17:00,true", "Taylor,Monday,08:00,18:00,true"]; downloadTemplateCSV(header, rows, "schedules-import-template.csv"); }} className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground sm:px-4">Download template</button>
+                <label className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground cursor-pointer sm:px-4">Import CSV
+                  <input type="file" accept=".csv" className="sr-only" onChange={async (e) => {
+                    const file = e.target.files?.[0]; e.target.value = ""; if (!file || !tenantId) return;
+                    const text = await file.text(); const lines = text.replace(/\r\n/g, "\n").split("\n").filter((l) => l.trim()); if (lines.length < 2) { showError("Import", "CSV must have header and at least one row."); return; }
+                    const parseLine = (line: string): string[] => { const out: string[] = []; let cur = ""; let inQ = false; for (let j = 0; j < line.length; j++) { const ch = line[j]; if (ch === '"') { inQ = !inQ; continue; } if (!inQ && ch === ",") { out.push(cur.trim()); cur = ""; continue; } cur += ch; } out.push(cur.trim()); return out; };
+                    const rawHeaders = parseLine(lines[0]).map((h) => h.toLowerCase().replace(/\s+/g, "_")); const get = (row: string[], k: string) => { const i = rawHeaders.indexOf(k); return i >= 0 && row[i] != null ? String(row[i]).trim() : ""; };
+                    const dayToNum: Record<string, number> = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6 }; let imported = 0, skipped = 0;
+                    for (let i = 1; i < lines.length; i++) { const row = parseLine(lines[i]); const staffName = get(row, "staff_name") || get(row, "staff"); const staffId = staffName ? staff?.find((s) => s.name.toLowerCase() === staffName.toLowerCase())?.id : null; if (!staffId) { skipped++; continue; } const dayStr = get(row, "day") || get(row, "day_of_week"); const day_of_week = dayToNum[dayStr.toLowerCase()] ?? (parseInt(dayStr, 10) >= 0 && parseInt(dayStr, 10) <= 6 ? parseInt(dayStr, 10) : -1); if (day_of_week < 0) { skipped++; continue; } let start = get(row, "start_time") || get(row, "start"); let end = get(row, "end_time") || get(row, "end"); if (start && start.length === 5) start = start + ":00"; if (end && end.length === 5) end = end + ":00"; if (!start) start = "09:00:00"; if (!end) end = "17:00:00"; try { await createSchedule.mutateAsync({ staff_id: staffId, day_of_week, start_time: start, end_time: end, is_available: get(row, "available") !== "false" && get(row, "available") !== "0", tenant_id: tenantId! }); imported++; } catch { skipped++; } }
+                    showSuccess("Import", `Imported ${imported} schedule(s).${skipped ? ` ${skipped} skipped.` : ""}`);
+                  }} />
+                </label>
+                <button onClick={openNewSchedule} className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground hover:scale-105 transition-transform sm:px-4 sm:text-xs"><Plus className="h-3.5 w-3.5" />Add</button>
+              </div>
             </div>
             {loadingSchedules ? <p className="text-sm text-muted-foreground">Loading...</p> : !schedules?.length ? (
               <div className="rounded-xl border border-border bg-card p-8 text-center">
@@ -1397,8 +2410,9 @@ const Admin = () => {
             <div className="space-y-3">
               <div><label className={labelCls}>Name *</label><input type="text" value={serviceForm.name} onChange={(e) => setServiceForm(f => ({ ...f, name: e.target.value }))} className={inputCls} /></div>
               <div><label className={labelCls}>Description</label><textarea value={serviceForm.description} onChange={(e) => setServiceForm(f => ({ ...f, description: e.target.value }))} rows={2} className={inputCls} /></div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <div><label className={labelCls}>Duration (min)</label><input type="number" value={serviceForm.duration_minutes} onChange={(e) => setServiceForm(f => ({ ...f, duration_minutes: parseInt(e.target.value) || 0 }))} className={inputCls} /></div>
+                <div><label className={labelCls}>Buffer (min)</label><input type="number" min={0} value={serviceForm.buffer_minutes} onChange={(e) => setServiceForm(f => ({ ...f, buffer_minutes: Math.max(0, parseInt(e.target.value) || 0) }))} className={inputCls} placeholder="0" /></div>
                 <div><label className={labelCls}>Price ($)</label><input type="number" step="0.01" value={serviceForm.price} onChange={(e) => setServiceForm(f => ({ ...f, price: parseFloat(e.target.value) || 0 }))} className={inputCls} /></div>
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -1440,6 +2454,7 @@ const Admin = () => {
                 );
               })}
 
+              <MetadataEditor businessType={tenant?.business_type ?? "salon"} metadata={serviceForm.metadata} onChange={(m) => setServiceForm(f => ({ ...f, metadata: m }))} className="rounded-lg border border-border bg-muted/30 p-3" />
               <div className="flex items-center gap-2">
                 <input type="checkbox" id="is_active" checked={serviceForm.is_active} onChange={(e) => setServiceForm(f => ({ ...f, is_active: e.target.checked }))} className="h-4 w-4 rounded border-border text-primary accent-primary" />
                 <label htmlFor="is_active" className="text-xs text-card-foreground">Active</label>
@@ -1468,6 +2483,7 @@ const Admin = () => {
                 <div><label className={labelCls}>Phone</label><input type="tel" value={locationForm.phone} onChange={(e) => setLocationForm(f => ({ ...f, phone: e.target.value }))} className={inputCls} /></div>
               </div>
               <div><label className={labelCls}>Email</label><input type="email" value={locationForm.email} onChange={(e) => setLocationForm(f => ({ ...f, email: e.target.value }))} className={inputCls} /></div>
+              <MetadataEditor businessType={tenant?.business_type ?? "salon"} metadata={locationForm.metadata} onChange={(m) => setLocationForm(f => ({ ...f, metadata: m }))} className="rounded-lg border border-border bg-muted/30 p-3" />
               <div className="flex items-center gap-2">
                 <input type="checkbox" id="loc_active" checked={locationForm.is_active} onChange={(e) => setLocationForm(f => ({ ...f, is_active: e.target.checked }))} className="h-4 w-4 rounded border-border text-primary accent-primary" />
                 <label htmlFor="loc_active" className="text-xs text-card-foreground">Active</label>
@@ -1509,6 +2525,7 @@ const Admin = () => {
                   {locations?.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
                 </select>
               </div>
+              <MetadataEditor businessType={tenant?.business_type ?? "salon"} metadata={staffForm.metadata} onChange={(m) => setStaffForm(f => ({ ...f, metadata: m }))} className="rounded-lg border border-border bg-muted/30 p-3" />
               <div className="flex items-center gap-2">
                 <input type="checkbox" id="staff_active" checked={staffForm.is_active} onChange={(e) => setStaffForm(f => ({ ...f, is_active: e.target.checked }))} className="h-4 w-4 rounded border-border text-primary accent-primary" />
                 <label htmlFor="staff_active" className="text-xs text-card-foreground">Active</label>
@@ -1653,6 +2670,78 @@ const Admin = () => {
                   className={inputCls}
                 />
               </div>
+              <div>
+                <label className={labelCls}>Tags (comma-separated)</label>
+                <input
+                  type="text"
+                  value={typeof clientForm.tags === "string" ? clientForm.tags : (Array.isArray(clientForm.tags) ? clientForm.tags.join(", ") : "")}
+                  onChange={(e) => setClientForm(f => ({ ...f, tags: e.target.value }))}
+                  placeholder="VIP, returning, ..."
+                  className={inputCls}
+                />
+              </div>
+              {editingClient && (
+                <div className="rounded-xl border border-border bg-secondary/20 p-3">
+                  <label className={labelCls}>Membership plan</label>
+                  {clientMembership?.membership_plans ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Current: <span className="font-medium text-card-foreground">{clientMembership.membership_plans.name}</span>
+                      {clientMembership.status !== "active" && (
+                        <span className="ml-1 rounded bg-muted px-1 py-0.5 text-[10px]">{clientMembership.status}</span>
+                      )}
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs text-muted-foreground">No plan assigned</p>
+                  )}
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <select
+                      value={selectedPlanIdForClient}
+                      onChange={(e) => setSelectedPlanIdForClient(e.target.value)}
+                      className="min-w-0 flex-1 rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    >
+                      <option value="">Select plan...</option>
+                      {membershipPlans?.filter((p) => p.is_active).map((p) => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={!selectedPlanIdForClient || setClientMembership.isPending}
+                      onClick={async () => {
+                        if (!selectedPlanIdForClient || !editingClient) return;
+                        try {
+                          await setClientMembership.mutateAsync({ client_id: editingClient.id, membership_plan_id: selectedPlanIdForClient });
+                          showSuccess("Plan assigned");
+                          setSelectedPlanIdForClient("");
+                        } catch {
+                          showError("Failed to assign plan");
+                        }
+                      }}
+                      className="rounded-full border border-border px-3 py-1.5 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                    >
+                      Assign
+                    </button>
+                    {clientMembership && (
+                      <button
+                        type="button"
+                        disabled={removeClientMembership.isPending}
+                        onClick={async () => {
+                          if (!editingClient) return;
+                          try {
+                            await removeClientMembership.mutateAsync(editingClient.id);
+                            showSuccess("Plan removed");
+                          } catch {
+                            showError("Failed to remove plan");
+                          }
+                        }}
+                        className="rounded-full border border-destructive/50 px-3 py-1.5 text-[11px] font-medium text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                      >
+                        Remove plan
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
               <button
                 onClick={async () => {
                   if (!clientForm.email && !clientForm.phone) {
@@ -1660,11 +2749,16 @@ const Admin = () => {
                     return;
                   }
                   try {
+                    const tagsArr = clientForm.tags
+                      ? (typeof clientForm.tags === "string"
+                        ? clientForm.tags.split(",").map((t) => t.trim()).filter(Boolean)
+                        : clientForm.tags)
+                      : null;
                     if (editingClient) {
-                      await updateClient.mutateAsync({ id: editingClient.id, ...clientForm, tenant_id: editingClient.tenant_id });
+                      await updateClient.mutateAsync({ id: editingClient.id, ...clientForm, tags: tagsArr, tenant_id: editingClient.tenant_id });
                       showSuccess("Client updated");
                     } else {
-                      await createClient.mutateAsync({ ...clientForm, tenant_id: tenantId! });
+                      await createClient.mutateAsync({ ...clientForm, tags: tagsArr, tenant_id: tenantId! });
                       showSuccess("Client created");
                     }
                     setShowClientForm(false);

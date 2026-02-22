@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/integrations/supabase/supabase-context";
 
 export interface SiteSetting {
   id: string;
@@ -11,6 +11,7 @@ export interface SiteSetting {
 }
 
 export function useSiteSettings(tenantId?: string | null) {
+  const supabase = useSupabase();
   return useQuery({
     queryKey: ["site-settings", tenantId],
     queryFn: async () => {
@@ -28,6 +29,7 @@ export function useSiteSettings(tenantId?: string | null) {
 }
 
 export function useSiteSetting(key: string, tenantId?: string | null) {
+  const supabase = useSupabase();
   return useQuery({
     queryKey: ["site-setting", key, tenantId],
     queryFn: async () => {
@@ -45,6 +47,7 @@ export function useSiteSetting(key: string, tenantId?: string | null) {
 }
 
 export function useCreateSiteSetting() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (setting: Omit<SiteSetting, "id" | "created_at" | "updated_at">) => {
@@ -64,6 +67,7 @@ export function useCreateSiteSetting() {
 }
 
 export function useUpdateSiteSetting() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, ...updates }: Partial<SiteSetting> & { id: string }) => {
@@ -125,6 +129,7 @@ export function useUpsertSiteSetting() {
 }
 
 export function useDeleteSiteSetting() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {

@@ -82,6 +82,7 @@ const Signup = () => {
           p_business_type: form.businessType,
         });
         if (error) throw error;
+        await supabase.rpc("link_tenant_request_to_tenant", { p_tenant_id: tenantId }).catch(() => {});
         showSuccess("Your 15-day free trial has started! Let's set up your business.");
         navigate(`/onboarding?tenant_id=${tenantId}`, { replace: true });
       } else {

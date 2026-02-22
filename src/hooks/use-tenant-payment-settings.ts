@@ -11,6 +11,8 @@ export const TENANT_PAYMENT_KEYS = {
   mpesaShortcode: "mpesa_shortcode",
   mpesaPasskey: "mpesa_passkey",
   payAtVenueEnabled: "pay_at_venue_enabled",
+  cancelByHours: "cancel_by_hours",
+  noShowAfterMinutes: "no_show_after_minutes",
 } as const;
 
 /** Returns tenant payment config for the booking page. Only safe/public values (no secrets). */
@@ -42,6 +44,8 @@ export type TenantPaymentSaveValues = {
   mpesaShortcode?: string;
   mpesaPasskey?: string;
   payAtVenueEnabled?: boolean;
+  cancelByHours?: number;
+  noShowAfterMinutes?: number;
 };
 
 /** For tenant payment form (Platform edit tenant / Admin Settings): load and save. Secrets are write-only. */
@@ -55,6 +59,10 @@ export function useTenantPaymentSettingsForm(tenantId: string | undefined) {
   const mpesaShortcode = get(TENANT_PAYMENT_KEYS.mpesaShortcode);
   const payAtVenueRaw = get(TENANT_PAYMENT_KEYS.payAtVenueEnabled);
   const payAtVenueEnabled = payAtVenueRaw !== "false" && payAtVenueRaw !== "0";
+  const cancelByHoursRaw = get(TENANT_PAYMENT_KEYS.cancelByHours);
+  const cancelByHours = cancelByHoursRaw !== "" ? Math.max(0, parseInt(cancelByHoursRaw, 10) || 0) : 24;
+  const noShowAfterMinutesRaw = get(TENANT_PAYMENT_KEYS.noShowAfterMinutes);
+  const noShowAfterMinutes = noShowAfterMinutesRaw !== "" ? Math.max(0, parseInt(noShowAfterMinutesRaw, 10) || 0) : 0;
 
   const save = async (values: TenantPaymentSaveValues) => {
     if (!tenantId) return;
@@ -121,6 +129,20 @@ export function useTenantPaymentSettingsForm(tenantId: string | undefined) {
         tenant_id: tenantId,
       });
     }
+    if (values.cancelByHours != null) {
+      await upsert.mutateAsync({
+        key: TENANT_PAYMENT_KEYS.cancelByHours,
+        value: String(values.cancelByHours),
+        tenant_id: tenantId,
+      });
+    }
+    if (values.noShowAfterMinutes != null) {
+      await upsert.mutateAsync({
+        key: TENANT_PAYMENT_KEYS.noShowAfterMinutes,
+        value: String(values.noShowAfterMinutes),
+        tenant_id: tenantId,
+      });
+    }
   };
 
   return {
@@ -129,6 +151,8 @@ export function useTenantPaymentSettingsForm(tenantId: string | undefined) {
     mpesaConsumerKey,
     mpesaShortcode,
     payAtVenueEnabled,
+    cancelByHours,
+    noShowAfterMinutes,
     save,
     isSaving: upsert.isPending,
   };

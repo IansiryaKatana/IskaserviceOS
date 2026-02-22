@@ -18,3 +18,24 @@ verify_jwt = false
 
 [functions.send-booking-confirmation]
 verify_jwt = false
+
+[functions.get-booking-by-cancel-token]
+verify_jwt = false
+
+[functions.cancel-booking]
+verify_jwt = false
+
+[functions.remove-my-expired-trial]
+verify_jwt = true
+
+[functions.stripe-webhook]
+verify_jwt = false
+
+[functions.claim-stripe-tenant]
+verify_jwt = true
+
+[functions.paypal-webhook]
+verify_jwt = false
+
+[functions.claim-paypal-tenant]
+verify_jwt = true
