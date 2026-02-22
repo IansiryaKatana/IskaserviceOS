@@ -740,7 +740,7 @@ const Index = () => {
   const { data: ratingStats } = useTenantRatingStats(tenantId);
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-hero font-body">
+    <div className="relative min-h-screen max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0 max-md:flex-col overflow-hidden bg-hero font-body">
       {/* Dynamic Background */}
       <div className="absolute inset-0">
         <picture>
@@ -837,7 +837,7 @@ const Index = () => {
       </header>
 
       {/* Hero Content - same container padding as header, generous bottom spacing */}
-      <main className="relative z-10 flex min-h-[calc(100vh-80px)] flex-col justify-end px-6 pb-12 sm:px-10 sm:pb-20 lg:px-12 lg:pb-24">
+      <main className="relative z-10 flex min-h-0 flex-1 flex-col justify-end px-6 pb-12 sm:px-10 sm:pb-20 md:min-h-[calc(100vh-80px)] md:flex-initial lg:px-12 lg:pb-24">
         <div className="max-w-2xl">
           <h1 className="font-display text-3xl font-bold leading-tight text-hero-foreground sm:text-5xl lg:text-6xl">
             <TypingText

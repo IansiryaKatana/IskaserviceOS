@@ -62,7 +62,7 @@ const Home = () => {
   }, []);
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-hero font-body">
+    <div className="relative min-h-screen max-md:flex max-md:h-[100dvh] max-md:max-h-[100dvh] max-md:min-h-0 max-md:flex-col overflow-hidden bg-hero font-body">
       {/* Full-screen Background Image */}
       <div className="absolute inset-0">
         <picture>
@@ -174,7 +174,7 @@ const Home = () => {
       </header>
 
       {/* Hero Content — bottom-left like tenant page */}
-      <main className="relative z-10 flex min-h-[calc(100vh-80px)] flex-col justify-end px-4 pb-8 sm:px-8 sm:pb-16">
+      <main className="relative z-10 flex min-h-0 flex-1 flex-col justify-end px-4 pb-8 sm:px-8 sm:pb-16 md:min-h-[calc(100vh-80px)] md:flex-initial">
         <div className="max-w-2xl">
           <h1 className="font-display text-3xl font-bold leading-tight text-hero-foreground sm:text-5xl lg:text-6xl">
             Powerful white-label platform for service businesses.
