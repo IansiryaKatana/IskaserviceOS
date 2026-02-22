@@ -1,8 +1,9 @@
 import { Link, useNavigate, useLocation, useSearchParams } from "react-router-dom";
-import { Check, X, CreditCard, Menu, Loader2 } from "lucide-react";
+import { Check, CreditCard, Menu, Loader2 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useCreateTenantRequest } from "@/hooks/use-tenant-requests";
 import { usePublicPaymentOptions } from "@/hooks/use-platform-payment-settings";
@@ -379,18 +380,12 @@ const Pricing = () => {
 
       </main>
 
-      {/* Payment / Request Dialog for Starter and Lifetime — single flow: pay with card in-dialog or request callback */}
-      {showRequestDialog && selectedPlan && (selectedPlan === PLAN_STARTER || selectedPlan === PLAN_LIFETIME) && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-foreground/40 p-0 sm:p-4 backdrop-blur-sm">
-          <div className="animate-slide-in-right w-full max-w-md rounded-t-2xl sm:rounded-2xl bg-card p-5 shadow-2xl sm:p-6 max-h-[90vh] overflow-y-auto">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
-                Get Started with {selectedPlan === PLAN_STARTER ? "Starter" : "Lifetime"}
-              </h3>
-              <button onClick={closePaymentDialog} className="rounded-lg p-1 text-muted-foreground hover:text-card-foreground" aria-label="Close">
-                <X className="h-5 w-5" />
-              </button>
-            </div>
+      {/* Payment / Request Dialog for Starter and Lifetime — Modal Bottom Sheet on tablet/mobile */}
+      <Dialog open={!!(showRequestDialog && selectedPlan && (selectedPlan === PLAN_STARTER || selectedPlan === PLAN_LIFETIME))} onOpenChange={(open) => !open && closePaymentDialog()}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto max-lg:mb-0">
+          <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
+            Get Started with {selectedPlan === PLAN_STARTER ? "Starter" : "Lifetime"}
+          </h3>
 
             {showCallbackForm ? (
               <>
@@ -528,26 +523,16 @@ const Pricing = () => {
                 </p>
               </>
             )}
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
 
-      {/* Enterprise Contact Sales Dialog */}
-      {showEnterpriseDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4 backdrop-blur-sm">
-          <div className="animate-slide-in-right w-full max-w-md rounded-2xl bg-card p-5 shadow-2xl sm:p-6 max-h-[90vh] overflow-y-auto">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
-                Contact Sales - Enterprise Solution
-              </h3>
-              <button
-                onClick={() => setShowEnterpriseDialog(false)}
-                className="text-muted-foreground hover:text-card-foreground"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <p className="mb-4 text-xs text-muted-foreground">
+      {/* Enterprise Contact Sales Dialog — Modal Bottom Sheet on tablet/mobile */}
+      <Dialog open={showEnterpriseDialog} onOpenChange={setShowEnterpriseDialog}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto max-lg:mb-0">
+          <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
+            Contact Sales - Enterprise Solution
+          </h3>
+          <p className="mb-4 text-xs text-muted-foreground">
               Tell us about your enterprise needs and our sales team will contact you with a custom solution.
             </p>
             <div className="space-y-3">
@@ -665,9 +650,8 @@ const Pricing = () => {
                 {createRequest.isPending ? "Submitting..." : "Contact Sales"}
               </button>
             </div>
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

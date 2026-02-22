@@ -43,13 +43,17 @@ const DialogContent = React.forwardRef<
       aria-describedby={undefined}
       className={cn(
         "fixed left-[50%] top-[50%] z-[100] grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg sm:rounded-lg",
+        "max-lg:left-0 max-lg:right-0 max-lg:top-auto max-lg:bottom-0 max-lg:translate-x-0 max-lg:translate-y-0 max-lg:max-w-none max-lg:max-h-[90vh] max-lg:overflow-y-auto max-lg:rounded-t-2xl max-lg:rounded-b-none max-lg:border-b-0 max-lg:data-[state=open]:animate-in max-lg:data-[state=closed]:animate-out max-lg:data-[state=open]:slide-in-from-bottom max-lg:data-[state=closed]:slide-out-to-bottom",
         className,
       )}
       {...props}
     >
       <DialogPrimitive.Title className="sr-only">Dialog</DialogPrimitive.Title>
+      <div className="max-lg:mb-0 max-lg:flex max-lg:justify-center max-lg:pb-2 lg:hidden">
+        <div className="h-1 w-10 shrink-0 rounded-full bg-muted" aria-hidden />
+      </div>
       {children}
-      <DialogPrimitive.Close className={cn("absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity data-[state=open]:bg-accent data-[state=open]:text-muted-foreground hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none", closeButtonClassName)}>
+      <DialogPrimitive.Close className={cn("absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity data-[state=open]:bg-accent data-[state=open]:text-muted-foreground hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none max-lg:top-3 max-lg:right-3", closeButtonClassName)}>
         <X className="h-4 w-4" />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>

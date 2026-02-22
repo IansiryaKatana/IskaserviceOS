@@ -863,7 +863,7 @@ const Index = () => {
 
       {/* Dialog: triggered by Book appointment button; also open when processing Stripe return */}
       <Dialog open={panelOpen || stripeReturnProcessing} onOpenChange={(open) => !stripeReturnProcessing && setPanelOpen(open)}>
-        <DialogContent hideOverlay closeButtonClassName="absolute right-4 top-4 sm:right-5 rounded-lg bg-muted p-1.5 hover:bg-muted/80 data-[state=open]:!bg-muted" className="booking-dialog animate-none left-auto right-6 top-20 bottom-6 z-[100] flex w-full max-w-[calc(28rem-60px)] translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-l-xl border-0 border-l bg-card p-0 shadow-2xl sm:right-10 sm:top-24 sm:bottom-8 sm:max-w-[calc(32rem-60px)] md:top-32 md:bottom-10 lg:right-12 lg:top-36 lg:bottom-12">
+        <DialogContent hideOverlay closeButtonClassName="absolute right-4 top-4 sm:right-5 rounded-lg bg-muted p-1.5 hover:bg-muted/80 data-[state=open]:!bg-muted" className="booking-dialog animate-none left-auto right-6 top-20 bottom-6 z-[100] flex w-full max-w-[calc(28rem-60px)] translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-l-xl border-0 border-l bg-card p-0 shadow-2xl sm:right-10 sm:top-24 sm:bottom-8 sm:max-w-[calc(32rem-60px)] md:top-32 md:bottom-10 lg:right-12 lg:top-36 lg:bottom-12 max-lg:!left-0 max-lg:!right-0 max-lg:!top-auto max-lg:!bottom-0 max-lg:!translate-x-0 max-lg:!translate-y-0 max-lg:!max-w-none max-lg:!w-full max-lg:!max-h-[90vh] max-lg:!rounded-t-2xl max-lg:!rounded-b-none max-lg:!rounded-l-none max-lg:!border-l-0">
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
             {/* Panel header: dynamic title; Back on left when cancel/login/signup or step > 0 */}
             {(() => {
@@ -1802,18 +1802,6 @@ const Index = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Mobile bottom bar */}
-      {!panelOpen && (
-        <div className="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-between border-t border-hero-muted/20 bg-hero/90 px-6 py-3 backdrop-blur-md md:hidden sm:px-10">
-          <p className="text-[10px] font-medium uppercase tracking-wider text-hero-muted">{tenantName}</p>
-          <button
-            onClick={() => setPanelOpen(true)}
-            className="rounded-full bg-primary px-5 py-2 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground"
-          >
-            Book now
-          </button>
-        </div>
-      )}
     </div>
   );
 };

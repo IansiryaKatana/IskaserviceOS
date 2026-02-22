@@ -200,7 +200,7 @@ const Home = () => {
         <DialogContent
           hideOverlay
           closeButtonClassName="absolute right-4 top-4 sm:right-5 rounded-lg bg-muted p-1.5 hover:bg-muted/80 data-[state=open]:!bg-muted"
-          className="booking-dialog animate-none left-auto right-6 top-20 bottom-6 z-[100] flex w-full max-w-[calc(28rem-60px)] translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-l-xl border-0 border-l bg-card p-0 shadow-2xl sm:right-10 sm:top-24 sm:bottom-8 sm:max-w-[calc(32rem-60px)] md:top-32 md:bottom-10 lg:right-12 lg:top-36 lg:bottom-12"
+          className="booking-dialog animate-none left-auto right-6 top-20 bottom-6 z-[100] flex w-full max-w-[calc(28rem-60px)] translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-l-xl border-0 border-l bg-card p-0 shadow-2xl sm:right-10 sm:top-24 sm:bottom-8 sm:max-w-[calc(32rem-60px)] md:top-32 md:bottom-10 lg:right-12 lg:top-36 lg:bottom-12 max-lg:!left-0 max-lg:!right-0 max-lg:!top-auto max-lg:!bottom-0 max-lg:!translate-x-0 max-lg:!translate-y-0 max-lg:!max-w-none max-lg:!w-full max-lg:!max-h-[90vh] max-lg:!rounded-t-2xl max-lg:!rounded-b-none max-lg:!rounded-l-none max-lg:!border-l-0"
         >
           <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
             {/* Panel header: same as booking dialog location step */}
@@ -292,22 +292,13 @@ const Home = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Request Callback Dialog */}
-      {showRequestDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40 p-4 backdrop-blur-sm">
-          <div className="animate-slide-in-right w-full max-w-md rounded-2xl bg-card p-5 shadow-2xl sm:p-6">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
-                Request a Callback
-              </h3>
-              <button
-                onClick={() => setShowRequestDialog(false)}
-                className="text-muted-foreground hover:text-card-foreground"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-            <p className="mb-4 text-xs text-muted-foreground">
+      {/* Request Callback Dialog — Modal Bottom Sheet on tablet/mobile via DialogContent */}
+      <Dialog open={showRequestDialog} onOpenChange={setShowRequestDialog}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto max-lg:mb-0">
+          <h3 className="font-display text-base font-bold text-card-foreground sm:text-lg">
+            Request a Callback
+          </h3>
+          <p className="mb-4 text-xs text-muted-foreground">
               Tell us about your business and we'll get back to you within 24 hours.
             </p>
             <div className="space-y-3">
@@ -405,9 +396,8 @@ const Home = () => {
                 {createRequest.isPending ? "Submitting..." : "Request Callback"}
               </button>
             </div>
-          </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
