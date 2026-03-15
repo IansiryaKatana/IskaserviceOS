@@ -64,8 +64,23 @@ export function TenantProvider({ children }: { children: ReactNode }) {
         .from("tenants")
         .select("*")
         .eq("id", id)
-        .single();
+        .maybeSingle();
       if (error) throw error;
+      if (!data) {
+        setTenant({
+          id: DEFAULT_TENANT_ID,
+          name: "Iska Service OS",
+          slug: "iska-service-os",
+          business_type: "salon",
+          logo_url: null,
+          favicon_url: null,
+          theme_config: getDefaultTheme(),
+          deployment_type: "hosted",
+          status: "active",
+        });
+        setLoading(false);
+        return;
+      }
       const rawTheme = (data.theme_config as unknown as Partial<TenantThemeConfig>) || {};
       setTenant({
         ...data,

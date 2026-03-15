@@ -78,5 +78,11 @@ export function SupabaseClientProvider({ children }: { children: ReactNode }) {
  */
 export function useSupabase(): SupabaseClientType {
   const ctx = useContext(SupabaseClientContext);
-  return ctx ?? defaultClient;
+  const client = ctx ?? defaultClient;
+  if (!client) {
+    throw new Error(
+      "Supabase client not available. Add VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY to .env (with VITE_ prefix) and restart the dev server."
+    );
+  }
+  return client;
 }

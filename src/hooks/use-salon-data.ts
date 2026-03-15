@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { useSupabase } from "@/integrations/supabase/supabase-context";
-import type { Json } from "@/integrations/supabase/types";
+import { supabase } from "@/integrations/supabase/client";
+import type { Database, Json } from "@/integrations/supabase/types";
 
 // Default tenant for backward compat
 const DEFAULT_TENANT_ID = "00000000-0000-0000-0000-000000000001";
@@ -683,12 +685,30 @@ export function useDeleteStaffSchedule() {
   });
 }
 
-// Image upload
-export async function uploadServiceImage(file: File): Promise<string> {
-  const ext = file.name.split(".").pop();
+const BUCKET = "service-images";
+
+/**
+ * Upload a file to the service-images bucket and return its public URL.
+ * Prefer passing the client from useSupabase() when calling from a component (e.g. Admin) so uploads use the same context client.
+ */
+export async function uploadServiceImage(
+  file: File,
+  client?: SupabaseClient<Database>
+): Promise<string> {
+  const sb = client ?? supabase;
+  if (!sb?.storage) {
+    const msg =
+      "Supabase client not available. Ensure .env has VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY and restart the dev server.";
+    console.error(msg);
+    throw new Error(msg);
+  }
+  const ext = file.name.split(".").pop() || "jpg";
   const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-  const { error } = await supabase.storage.from("service-images").upload(fileName, file);
-  if (error) throw error;
-  const { data } = supabase.storage.from("service-images").getPublicUrl(fileName);
+  const { error } = await sb.storage.from(BUCKET).upload(fileName, file, { upsert: true });
+  if (error) {
+    console.error("[uploadServiceImage] storage error", error);
+    throw error;
+  }
+  const { data } = sb.storage.from(BUCKET).getPublicUrl(fileName);
   return data.publicUrl;
 }

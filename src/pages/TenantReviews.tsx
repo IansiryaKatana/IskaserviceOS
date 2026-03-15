@@ -13,12 +13,15 @@ const TenantReviews = () => {
   const { showSuccess, showError } = useFeedback();
   const { slug } = useParams<{ slug: string }>();
   const location = useLocation();
-  const { tenant, tenantId } = useTenant();
-  const { data: reviews, isLoading: loadingReviews } = useTenantReviews(tenantId);
-  const { data: stats } = useTenantRatingStats(tenantId);
-  const { data: desktopBg } = useSiteSetting("reviews_bg_desktop", tenantId ?? null);
-  const { data: mobileBg } = useSiteSetting("reviews_bg_mobile", tenantId ?? null);
+  const { tenant, tenantId, loading: tenantLoading } = useTenant();
+  // Only fetch reviews when tenant is resolved from this route's slug (avoids wrong tenant from /admin or default)
+  const effectiveTenantId = slug && tenant?.slug === slug ? tenant.id : undefined;
+  const { data: reviews, isLoading: loadingReviews } = useTenantReviews(effectiveTenantId);
+  const { data: stats } = useTenantRatingStats(effectiveTenantId);
+  const { data: desktopBg } = useSiteSetting("reviews_bg_desktop", effectiveTenantId ?? null);
+  const { data: mobileBg } = useSiteSetting("reviews_bg_mobile", effectiveTenantId ?? null);
   const createReview = useCreateReview();
+  const loading = tenantLoading || (!!slug && tenant?.slug !== slug) || loadingReviews;
 
   const [api, setApi] = useState<CarouselApi>();
   const [current, setCurrent] = useState(0);
@@ -44,7 +47,7 @@ const TenantReviews = () => {
   }, [api]);
 
   const handleSubmitReview = async () => {
-    if (!reviewForm.reviewer_name || !tenantId) {
+    if (!reviewForm.reviewer_name || !effectiveTenantId) {
       showError("Required", "Name is required");
       return;
     }
@@ -54,7 +57,7 @@ const TenantReviews = () => {
     }
     try {
       await createReview.mutateAsync({
-        tenant_id: tenantId,
+        tenant_id: effectiveTenantId,
         rating: reviewForm.rating,
         reviewer_name: reviewForm.reviewer_name,
         reviewer_email: reviewForm.reviewer_email || null,
@@ -186,7 +189,7 @@ const TenantReviews = () => {
           </h1>
         </div>
 
-        {loadingReviews ? (
+        {loading ? (
           <div className="mt-auto flex justify-center gap-4">
             {[1, 2, 3].map((i) => (
               <div key={i} className="h-48 w-72 animate-pulse rounded-xl bg-white/10 backdrop-blur-md" />

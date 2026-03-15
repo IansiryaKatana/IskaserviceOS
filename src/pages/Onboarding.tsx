@@ -46,6 +46,7 @@ const Onboarding = () => {
     locationPhone: "",
   });
   const [brandingLogoUrl, setBrandingLogoUrl] = useState("");
+  const [brandingLogoUploading, setBrandingLogoUploading] = useState(false);
   const [brandingPrimaryColor, setBrandingPrimaryColor] = useState("#000000");
   const [paymentChoice, setPaymentChoice] = useState<"now" | "later">("later");
   const [paymentStripePk, setPaymentStripePk] = useState("");
@@ -63,7 +64,7 @@ const Onboarding = () => {
         .from("tenants")
         .select("id, name, slug, business_type")
         .eq("id", tenantId)
-        .single()
+        .maybeSingle()
         .then(({ data, error }) => {
           if (error || !data) {
             navigate("/pricing", { replace: true });
@@ -204,7 +205,7 @@ const Onboarding = () => {
       const updates: { logo_url?: string | null; theme_config?: Record<string, unknown> } = {};
       if (brandingLogoUrl.trim()) updates.logo_url = brandingLogoUrl.trim();
       if (brandingPrimaryColor.trim()) {
-        const { data: t } = await supabase.from("tenants").select("theme_config").eq("id", tenant.id).single();
+        const { data: t } = await supabase.from("tenants").select("theme_config").eq("id", tenant.id).maybeSingle();
         const current = (t?.theme_config as Record<string, unknown>) || {};
         updates.theme_config = { ...current, primary_color: brandingPrimaryColor };
       }
@@ -464,6 +465,32 @@ const Onboarding = () => {
                 onChange={(e) => setBrandingLogoUrl(e.target.value)}
                 placeholder="https://..."
                 className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+              />
+              <p className="mt-1 text-[10px] text-muted-foreground">Or upload</p>
+              <input
+                type="file"
+                accept="image/*"
+                disabled={brandingLogoUploading}
+                className="mt-1 w-full text-xs file:mr-2 file:rounded-full file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-primary-foreground"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  setBrandingLogoUploading(true);
+                  try {
+                    const ext = file.name.split(".").pop() || "png";
+                    const path = `onboarding/logo-${Date.now()}.${ext}`;
+                    const { error } = await supabase.storage.from("service-images").upload(path, file, { upsert: true });
+                    if (error) throw error;
+                    const { data: { publicUrl } } = supabase.storage.from("service-images").getPublicUrl(path);
+                    setBrandingLogoUrl(publicUrl);
+                    showSuccess("Logo uploaded");
+                  } catch (err: unknown) {
+                    showError("Upload failed", err instanceof Error ? err.message : "Failed to upload logo");
+                  } finally {
+                    setBrandingLogoUploading(false);
+                    e.target.value = "";
+                  }
+                }}
               />
               {brandingLogoUrl && <img src={brandingLogoUrl} alt="Preview" className="mt-1 h-10 rounded border border-border object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />}
             </div>

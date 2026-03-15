@@ -87,8 +87,9 @@ export function useUpdateTenant() {
         .update(updates)
         .eq("id", id)
         .select()
-        .single();
+        .maybeSingle();
       if (error) throw error;
+      if (!data) throw new Error("Tenant not found or update returned no row");
       return data;
     },
     onSuccess: () => {
@@ -97,12 +98,24 @@ export function useUpdateTenant() {
   });
 }
 
+const DELETE_TENANT_MSG =
+  "Tenant could not be deleted. You must be a platform admin to delete tenants. If you are, the tenant may have been removed already.";
+
 export function useDeleteTenant() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("tenants").delete().eq("id", id);
-      if (error) throw error;
+      if (!id || typeof id !== "string") {
+        throw new Error("Invalid tenant id.");
+      }
+      const { error } = await supabase.rpc("delete_tenant", { p_tenant_id: id });
+      if (error) {
+        if (process.env.NODE_ENV === "development") {
+          console.error("[delete_tenant] RPC error:", error.code, error.message, error.details, error.hint);
+        }
+        const msg = error.details ? `${error.message} (${error.details})` : error.message;
+        throw new Error(msg || DELETE_TENANT_MSG);
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["platform-tenants"] });

@@ -12,10 +12,10 @@ export async function getTenantClient(tenantId: string): Promise<SupabaseClient<
     .from('tenants')
     .select('deployment_type, tenant_deployment_config(*)')
     .eq('id', tenantId)
-    .single();
+    .maybeSingle();
 
-  if (tenantError) {
-    console.error('Error fetching tenant:', tenantError);
+  if (tenantError || !tenant) {
+    if (tenantError) console.error('Error fetching tenant:', tenantError);
     return defaultClient; // Fallback to default
   }
 

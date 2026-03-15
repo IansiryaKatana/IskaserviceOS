@@ -4,7 +4,7 @@ import { useTenant } from "@/hooks/use-tenant";
 import { TenantSwitcher } from "@/components/TenantSwitcher";
 import { TrialBanner } from "@/components/TrialBanner";
 import { Navigate, Link } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/integrations/supabase/supabase-context";
 import { useTrialStatus } from "@/hooks/use-my-subscription";
 import {
   useAllServices, useCreateService, useUpdateService, useDeleteService,
@@ -16,6 +16,7 @@ import {
   uploadServiceImage,
   type Service, type Location, type Staff, type ServiceCategory, type StaffSchedule,
 } from "@/hooks/use-salon-data";
+import { useReviewsForAdmin, useCreateReview, useUpdateReview, useDeleteReview, type Review } from "@/hooks/use-reviews";
 import { useTenantAnalytics } from "@/hooks/use-analytics";
 import { useClients, useClient, useCreateClient, useUpdateClient, useDeleteClient, type Client } from "@/hooks/use-clients";
 import { usePayments, useCreatePayment, useUpdatePayment, usePaymentStats, type Payment } from "@/hooks/use-payments";
@@ -24,7 +25,7 @@ import { usePosSales, useCompletePosSale, usePosSaleStats, type PosCartItem } fr
 import { useIsPlatformAdmin } from "@/hooks/use-user-roles";
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts";
-import { Plus, Edit2, Trash2, ArrowUpRight, Scissors, Calendar, ChevronDown, MapPin, Users, Upload, Tag, Clock, BarChart3, UserCircle, CreditCard, Package, ShoppingCart, Minus, X, DollarSign, Receipt, Search, Settings, Palette, FileText, ListTodo } from "lucide-react";
+import { Plus, Edit2, Trash2, ArrowUpRight, Scissors, Calendar, ChevronDown, MapPin, Users, Upload, Tag, Clock, BarChart3, UserCircle, CreditCard, Package, ShoppingCart, Minus, X, DollarSign, Receipt, Search, Settings, Palette, FileText, ListTodo, Star } from "lucide-react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { RecordsPagination } from "@/components/RecordsPagination";
@@ -40,7 +41,7 @@ import { useWaitlist, useUpdateWaitlistEntry, type WaitlistEntry } from "@/hooks
 import { useMembershipPlans, useCreateMembershipPlan, useUpdateMembershipPlan, useDeleteMembershipPlan, type MembershipPlan } from "@/hooks/use-membership-plans";
 import { useClientMembership, useSetClientMembership, useRemoveClientMembership } from "@/hooks/use-client-memberships";
 
-type Tab = "analytics" | "services" | "bookings" | "locations" | "staff" | "categories" | "schedules" | "clients" | "payments" | "inventory" | "pos" | "waitlist" | "membership" | "audit" | "settings";
+type Tab = "analytics" | "services" | "bookings" | "locations" | "staff" | "categories" | "schedules" | "clients" | "reviews" | "payments" | "inventory" | "pos" | "waitlist" | "membership" | "audit" | "settings";
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -86,6 +87,7 @@ function downloadTemplateCSV(header: string, sampleRows: string[], filename: str
 const Admin = () => {
   const { user, loading, signOut } = useAuth();
   const { tenant, tenantId, refreshTenant } = useTenant();
+  const supabase = useSupabase();
   const { showSuccess, showError } = useFeedback();
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
 
@@ -116,7 +118,25 @@ const Admin = () => {
   const updateSchedule = useUpdateStaffSchedule();
   const deleteSchedule = useDeleteStaffSchedule();
 
+  const { data: reviews, isLoading: loadingReviews } = useReviewsForAdmin(tenantId);
+  const createReview = useCreateReview();
+  const updateReview = useUpdateReview();
+  const deleteReview = useDeleteReview();
+
   const [tab, setTab] = useState<Tab>("services");
+  const [selectedReviewIds, setSelectedReviewIds] = useState<string[]>([]);
+  const [reviewFilter, setReviewFilter] = useState("");
+  const [editingReview, setEditingReview] = useState<Review | null>(null);
+  const [showReviewForm, setShowReviewForm] = useState(false);
+  const [reviewForm, setReviewForm] = useState({
+    reviewer_name: "",
+    reviewer_email: "",
+    rating: 5,
+    title: "",
+    comment: "",
+    is_approved: true,
+    is_featured: false,
+  });
 
   // Service form
   const [editingService, setEditingService] = useState<Service | null>(null);
@@ -283,6 +303,11 @@ const Admin = () => {
   const categoriesPag = usePagination(categories, 6);
   const bookingsPag = usePagination(bookings, 6);
   const clientsPag = usePagination(clients, 6);
+  const reviewsFiltered = useMemo(
+    () => (reviews ?? []).filter((r) => !reviewFilter || r.reviewer_name.toLowerCase().includes(reviewFilter.toLowerCase()) || (r.title ?? "").toLowerCase().includes(reviewFilter.toLowerCase())),
+    [reviews, reviewFilter]
+  );
+  const reviewsPag = usePagination(reviewsFiltered, 10);
   const paymentsPag = usePagination(payments, 6);
 
   const tenantPaymentForm = useTenantPaymentSettingsForm(tenantId);
@@ -298,8 +323,11 @@ const Admin = () => {
   const [settingsCancelByHours, setSettingsCancelByHours] = useState(24);
   const [settingsNoShowAfterMinutes, setSettingsNoShowAfterMinutes] = useState(0);
   const [settingsLogoUrl, setSettingsLogoUrl] = useState("");
+  const [settingsFaviconUrl, setSettingsFaviconUrl] = useState("");
   const [settingsPrimaryColor, setSettingsPrimaryColor] = useState("#000000");
   const [brandingSaving, setBrandingSaving] = useState(false);
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [faviconUploading, setFaviconUploading] = useState(false);
   useEffect(() => {
     if (tab === "settings") {
       setSettingsPaypalClientId(tenantPaymentForm.paypalClientId || "");
@@ -310,9 +338,10 @@ const Admin = () => {
       setSettingsCancelByHours(tenantPaymentForm.cancelByHours ?? 24);
       setSettingsNoShowAfterMinutes(tenantPaymentForm.noShowAfterMinutes ?? 0);
       setSettingsLogoUrl(tenant?.logo_url || "");
+      setSettingsFaviconUrl(tenant?.favicon_url || "");
       setSettingsPrimaryColor(tenant?.theme_config?.primary_color || "#000000");
     }
-  }, [tab, tenant?.logo_url, tenant?.theme_config?.primary_color, tenantPaymentForm.paypalClientId, tenantPaymentForm.stripePublishableKey, tenantPaymentForm.mpesaConsumerKey, tenantPaymentForm.mpesaShortcode, tenantPaymentForm.payAtVenueEnabled, tenantPaymentForm.cancelByHours, tenantPaymentForm.noShowAfterMinutes]);
+  }, [tab, tenant?.logo_url, tenant?.favicon_url, tenant?.theme_config?.primary_color, tenantPaymentForm.paypalClientId, tenantPaymentForm.stripePublishableKey, tenantPaymentForm.mpesaConsumerKey, tenantPaymentForm.mpesaShortcode, tenantPaymentForm.payAtVenueEnabled, tenantPaymentForm.cancelByHours, tenantPaymentForm.noShowAfterMinutes]);
 
   const stockItemsPag = usePagination(stockItems, 6);
   const locationsPag = usePagination(locations, 6);
@@ -404,11 +433,13 @@ const Admin = () => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const url = await uploadServiceImage(file);
+      const url = await uploadServiceImage(file, supabase);
       setServiceForm((f) => ({ ...f, [field]: url }));
       showSuccess("Image uploaded");
-    } catch {
-      showError("Upload failed");
+    } catch (err: any) {
+      const msg = err?.message ?? String(err) ?? "Upload failed";
+      console.error("[Admin handleImageUpload]", err);
+      showError("Upload failed", msg);
     }
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
@@ -610,6 +641,7 @@ const Admin = () => {
     { key: "categories", label: "Categories", icon: <Tag className="h-3.5 w-3.5" /> },
     { key: "bookings", label: "Bookings", icon: <Calendar className="h-3.5 w-3.5" /> },
     { key: "clients", label: "Clients", icon: <UserCircle className="h-3.5 w-3.5" /> },
+    { key: "reviews", label: "Reviews", icon: <Star className="h-3.5 w-3.5" /> },
     { key: "payments", label: "Payments", icon: <CreditCard className="h-3.5 w-3.5" /> },
     { key: "inventory", label: "Inventory", icon: <Package className="h-3.5 w-3.5" /> },
     { key: "pos", label: "POS", icon: <ShoppingCart className="h-3.5 w-3.5" /> },
@@ -1097,6 +1129,352 @@ const Admin = () => {
                     </div>
                   </>
                 )}
+              </SheetContent>
+            </Sheet>
+          </div>
+        )}
+
+        {/* ========= REVIEWS ========= */}
+        {tab === "reviews" && (
+          <div>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 sm:mb-6">
+              <h2 className="font-display text-lg font-bold text-foreground sm:text-xl">Reviews</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  placeholder="Filter by name"
+                  value={reviewFilter}
+                  onChange={(e) => setReviewFilter(e.target.value)}
+                  className="w-32 rounded-lg border border-border bg-background px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                />
+                <button
+                  type="button"
+                  onClick={() => reviews?.length && exportToCSV(
+                    reviews.map((r) => ({
+                      reviewer_name: r.reviewer_name,
+                      reviewer_email: r.reviewer_email ?? "",
+                      rating: r.rating,
+                      title: r.title ?? "",
+                      comment: (r.comment ?? "").slice(0, 200),
+                      is_approved: r.is_approved,
+                      is_featured: r.is_featured,
+                      helpful_count: r.helpful_count,
+                      created_at: r.created_at,
+                    })),
+                    [
+                      { key: "reviewer_name", label: "Reviewer name" },
+                      { key: "reviewer_email", label: "Reviewer email" },
+                      { key: "rating", label: "Rating" },
+                      { key: "title", label: "Title" },
+                      { key: "comment", label: "Comment" },
+                      { key: "is_approved", label: "Approved" },
+                      { key: "is_featured", label: "Featured" },
+                      { key: "helpful_count", label: "Helpful count" },
+                      { key: "created_at", label: "Created" },
+                    ],
+                    `reviews-export-${new Date().toISOString().slice(0, 10)}.csv`
+                  )}
+                  disabled={!reviews?.length}
+                  className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground disabled:opacity-50 sm:px-4"
+                >
+                  Export CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const header = "Reviewer name,Reviewer email,Rating,Title,Comment,Approved,Featured";
+                    const rows = [
+                      "Jane Doe,jane@example.com,5,Great service!,Loved the haircut. Will come again.,true,true",
+                      "John Smith,john@example.com,4,Good experience,Staff was friendly. Minor wait.,true,false",
+                      "Maria Garcia,maria@example.com,5,Amazing,Best salon in town.,true,true",
+                      "David Lee,david@example.com,3,Okay,Service was fine but a bit pricey.,true,false",
+                      "Sarah Johnson,sarah@example.com,5,Highly recommend,Clean and professional.,true,false",
+                    ];
+                    downloadTemplateCSV(header, rows, "reviews-import-template.csv");
+                  }}
+                  className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground sm:px-4"
+                >
+                  Download template
+                </button>
+                <label className="rounded-full border border-border px-3 py-2 text-[11px] font-medium text-muted-foreground hover:bg-secondary hover:text-foreground cursor-pointer sm:px-4">
+                  Import CSV
+                  <input
+                    type="file"
+                    accept=".csv"
+                    className="sr-only"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!file || !tenantId) return;
+                      const text = await file.text();
+                      const lines = text.replace(/\r\n/g, "\n").split("\n").filter((l) => l.trim());
+                      if (lines.length < 2) {
+                        showError("Import", "CSV must have a header row and at least one data row.");
+                        return;
+                      }
+                      const parseCSVLine = (line: string): string[] => {
+                        const out: string[] = [];
+                        let cur = "";
+                        let inQuotes = false;
+                        for (let j = 0; j < line.length; j++) {
+                          const ch = line[j];
+                          if (ch === '"') { inQuotes = !inQuotes; continue; }
+                          if (!inQuotes && ch === ",") { out.push(cur.trim()); cur = ""; continue; }
+                          cur += ch;
+                        }
+                        out.push(cur.trim());
+                        return out;
+                      };
+                      const rawHeaders = parseCSVLine(lines[0]).map((h) => h.toLowerCase().replace(/\s+/g, "_"));
+                      const get = (row: string[], key: string) => {
+                        const i = rawHeaders.indexOf(key);
+                        if (i === -1) return "";
+                        return row[i] != null ? String(row[i]).trim() : "";
+                      };
+                      let imported = 0;
+                      let skipped = 0;
+                      for (let i = 1; i < lines.length; i++) {
+                        const row = parseCSVLine(lines[i]);
+                        const reviewer_name = get(row, "reviewer_name") || get(row, "reviewer");
+                        const reviewer_email = get(row, "reviewer_email") || get(row, "email");
+                        const rating = Math.min(5, Math.max(1, parseInt(get(row, "rating"), 10) || 5));
+                        const title = get(row, "title");
+                        const comment = get(row, "comment");
+                        const is_approved = get(row, "approved") !== "false" && get(row, "approved") !== "0";
+                        const is_featured = get(row, "featured") === "true" || get(row, "featured") === "1";
+                        if (!reviewer_name) { skipped++; continue; }
+                        try {
+                          await createReview.mutateAsync({
+                            tenant_id: tenantId,
+                            reviewer_name,
+                            reviewer_email: reviewer_email || null,
+                            rating,
+                            title: title || null,
+                            comment: comment || null,
+                            is_approved,
+                            is_featured,
+                          });
+                          imported++;
+                        } catch { skipped++; }
+                      }
+                      showSuccess("Import", `Imported ${imported} review(s).${skipped ? ` ${skipped} skipped.` : ""}`);
+                    }}
+                  />
+                </label>
+                {selectedReviewIds.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfirmState({
+                        open: true,
+                        title: "Delete selected reviews",
+                        description: `Delete ${selectedReviewIds.length} selected review(s)?`,
+                        onConfirm: async () => {
+                          for (const id of selectedReviewIds) {
+                            const r = reviews?.find((x) => x.id === id);
+                            if (r) await deleteReview.mutateAsync({ id, tenant_id: r.tenant_id });
+                          }
+                          setSelectedReviewIds([]);
+                          showSuccess("Deleted", `${selectedReviewIds.length} review(s) deleted.`);
+                        },
+                      });
+                    }}
+                    className="rounded-full border border-destructive bg-destructive/10 px-3 py-2 text-[11px] font-medium text-destructive hover:bg-destructive/20 sm:px-4"
+                  >
+                    Delete selected ({selectedReviewIds.length})
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    setEditingReview(null);
+                    setReviewForm({ reviewer_name: "", reviewer_email: "", rating: 5, title: "", comment: "", is_approved: true, is_featured: false });
+                    setShowReviewForm(true);
+                  }}
+                  className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground hover:scale-[1.02] transition-transform sm:px-4 sm:text-xs"
+                >
+                  <Plus className="h-3.5 w-3.5" />Add Review
+                </button>
+              </div>
+            </div>
+            {loadingReviews ? (
+              <p className="text-sm text-muted-foreground">Loading...</p>
+            ) : !reviews?.length ? (
+              <div className="rounded-xl border border-border bg-card p-8 text-center">
+                <Star className="mx-auto h-8 w-8 text-muted-foreground mb-2" />
+                <p className="text-sm text-muted-foreground">No reviews yet.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card p-2">
+                  <label className="flex cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={reviewsPag.paginatedItems.length > 0 && reviewsPag.paginatedItems.every((r) => selectedReviewIds.includes(r.id))}
+                      onChange={(e) => {
+                        if (e.target.checked) setSelectedReviewIds(reviewsPag.paginatedItems.map((r) => r.id));
+                        else setSelectedReviewIds([]);
+                      }}
+                      className="h-4 w-4 rounded border-border text-primary accent-primary"
+                    />
+                    Select all (page)
+                  </label>
+                </div>
+                {reviewsPag.paginatedItems.map((r) => (
+                  <div key={r.id} className="rounded-xl border border-border bg-card p-4 hover:shadow-md transition-shadow">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="flex min-w-0 flex-1 items-start gap-3">
+                        <label className="flex shrink-0 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={selectedReviewIds.includes(r.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) setSelectedReviewIds((ids) => [...ids, r.id]);
+                              else setSelectedReviewIds((ids) => ids.filter((id) => id !== r.id));
+                            }}
+                            className="h-4 w-4 rounded border-border text-primary accent-primary"
+                          />
+                        </label>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-semibold text-card-foreground">{r.reviewer_name}</span>
+                            <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">{r.rating} ★</span>
+                            {r.is_approved && <span className="text-[10px] text-muted-foreground">Approved</span>}
+                            {r.is_featured && <span className="text-[10px] text-primary">Featured</span>}
+                          </div>
+                          {r.title && <p className="text-sm text-card-foreground mt-0.5">{r.title}</p>}
+                          {r.comment && <p className="text-[11px] text-muted-foreground line-clamp-2">{r.comment}</p>}
+                          {r.reviewer_email && <p className="text-[10px] text-muted-foreground">{r.reviewer_email}</p>}
+                          <p className="text-[10px] text-muted-foreground mt-1">{new Date(r.created_at).toLocaleString()}</p>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 gap-1">
+                        <button
+                          onClick={() => {
+                            setEditingReview(r);
+                            setReviewForm({
+                              reviewer_name: r.reviewer_name,
+                              reviewer_email: r.reviewer_email ?? "",
+                              rating: r.rating,
+                              title: r.title ?? "",
+                              comment: r.comment ?? "",
+                              is_approved: r.is_approved,
+                              is_featured: r.is_featured,
+                            });
+                            setShowReviewForm(true);
+                          }}
+                          className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+                        >
+                          <Edit2 className="h-3.5 w-3.5" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            setConfirmState({
+                              open: true,
+                              title: "Delete review",
+                              description: "Delete this review?",
+                              onConfirm: async () => {
+                                try {
+                                  await deleteReview.mutateAsync({ id: r.id, tenant_id: r.tenant_id });
+                                  setSelectedReviewIds((ids) => ids.filter((id) => id !== r.id));
+                                  showSuccess("Deleted", "Review deleted.");
+                                } catch {
+                                  showError("Failed", "Could not delete review.");
+                                  throw new Error();
+                                }
+                              },
+                            });
+                          }}
+                          className="rounded-lg p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                <RecordsPagination page={reviewsPag.page} totalPages={reviewsPag.totalPages} onPageChange={reviewsPag.setPage} />
+              </div>
+            )}
+
+            {/* Review form sheet */}
+            <Sheet open={showReviewForm} onOpenChange={setShowReviewForm}>
+              <SheetContent side="right" className="w-full max-w-md overflow-y-auto">
+                <SheetHeader>
+                  <SheetTitle>{editingReview ? "Edit Review" : "Add Review"}</SheetTitle>
+                </SheetHeader>
+                <div className="mt-4 space-y-4">
+                  <div>
+                    <label className={labelCls}>Reviewer name *</label>
+                    <input value={reviewForm.reviewer_name} onChange={(e) => setReviewForm((f) => ({ ...f, reviewer_name: e.target.value }))} className={inputCls} placeholder="Jane Doe" />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Reviewer email</label>
+                    <input type="email" value={reviewForm.reviewer_email} onChange={(e) => setReviewForm((f) => ({ ...f, reviewer_email: e.target.value }))} className={inputCls} placeholder="jane@example.com" />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Rating (1-5) *</label>
+                    <select value={reviewForm.rating} onChange={(e) => setReviewForm((f) => ({ ...f, rating: parseInt(e.target.value, 10) }))} className={inputCls}>
+                      {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n} ★</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className={labelCls}>Title</label>
+                    <input value={reviewForm.title} onChange={(e) => setReviewForm((f) => ({ ...f, title: e.target.value }))} className={inputCls} placeholder="Great service!" />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Comment</label>
+                    <textarea value={reviewForm.comment} onChange={(e) => setReviewForm((f) => ({ ...f, comment: e.target.value }))} className={inputCls} rows={3} placeholder="Your experience..." />
+                  </div>
+                  <div className="flex gap-4">
+                    <label className="flex cursor-pointer items-center gap-2 text-xs text-card-foreground">
+                      <input type="checkbox" checked={reviewForm.is_approved} onChange={(e) => setReviewForm((f) => ({ ...f, is_approved: e.target.checked }))} className="h-4 w-4 rounded border-border text-primary accent-primary" />
+                      Approved
+                    </label>
+                    <label className="flex cursor-pointer items-center gap-2 text-xs text-card-foreground">
+                      <input type="checkbox" checked={reviewForm.is_featured} onChange={(e) => setReviewForm((f) => ({ ...f, is_featured: e.target.checked }))} className="h-4 w-4 rounded border-border text-primary accent-primary" />
+                      Featured
+                    </label>
+                  </div>
+                  <div className="flex gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!tenantId) return;
+                        if (!reviewForm.reviewer_name.trim()) { showError("Validation", "Reviewer name is required."); return; }
+                        if (editingReview) {
+                          await updateReview.mutateAsync({
+                            id: editingReview.id,
+                            reviewer_name: reviewForm.reviewer_name.trim(),
+                            reviewer_email: reviewForm.reviewer_email.trim() || null,
+                            rating: reviewForm.rating,
+                            title: reviewForm.title.trim() || null,
+                            comment: reviewForm.comment.trim() || null,
+                            is_approved: reviewForm.is_approved,
+                            is_featured: reviewForm.is_featured,
+                          });
+                          showSuccess("Updated", "Review updated.");
+                        } else {
+                          await createReview.mutateAsync({
+                            tenant_id: tenantId,
+                            reviewer_name: reviewForm.reviewer_name.trim(),
+                            reviewer_email: reviewForm.reviewer_email.trim() || null,
+                            rating: reviewForm.rating,
+                            title: reviewForm.title.trim() || null,
+                            comment: reviewForm.comment.trim() || null,
+                            is_approved: reviewForm.is_approved,
+                            is_featured: reviewForm.is_featured,
+                          });
+                          showSuccess("Added", "Review added.");
+                        }
+                        setShowReviewForm(false);
+                      }}
+                      className="rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90"
+                    >
+                      {editingReview ? "Update" : "Add"}
+                    </button>
+                    <button type="button" onClick={() => setShowReviewForm(false)} className="rounded-lg border border-border px-4 py-2 text-xs font-medium hover:bg-secondary">Cancel</button>
+                  </div>
+                </div>
               </SheetContent>
             </Sheet>
           </div>
@@ -1832,11 +2210,47 @@ const Admin = () => {
             <div className="max-w-md space-y-6">
               <div className="rounded-xl border border-border bg-card p-4 space-y-3">
                 <h3 className="text-sm font-semibold text-card-foreground flex items-center gap-1.5"><Palette className="h-3.5 w-3.5" /> Branding</h3>
-                <p className="text-[11px] text-muted-foreground">Logo and primary color appear on your booking page and in the app.</p>
+                <p className="text-[11px] text-muted-foreground">Logo, favicon and primary color appear on your booking page and in the app.</p>
                 <div>
                   <label className={labelCls}>Logo URL</label>
                   <input type="url" value={settingsLogoUrl} onChange={(e) => setSettingsLogoUrl(e.target.value)} placeholder="https://..." className={inputCls} />
+                  <p className="mt-1 text-[10px] text-muted-foreground">Or upload</p>
+                  <input type="file" accept="image/*" disabled={logoUploading} className="mt-1 w-full text-xs file:mr-2 file:rounded-full file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-primary-foreground" onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setLogoUploading(true);
+                    try {
+                      const url = await uploadServiceImage(file, supabase);
+                      setSettingsLogoUrl(url);
+                      showSuccess("Logo uploaded");
+                    } catch (err: unknown) {
+                      showError("Upload failed", err instanceof Error ? err.message : "Failed to upload logo");
+                    } finally {
+                      setLogoUploading(false);
+                      e.target.value = "";
+                    }
+                  }} />
                   {settingsLogoUrl && <img src={settingsLogoUrl} alt="Logo preview" className="mt-1 h-10 rounded border border-border object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />}
+                </div>
+                <div>
+                  <label className={labelCls}>Favicon URL</label>
+                  <input type="url" value={settingsFaviconUrl} onChange={(e) => setSettingsFaviconUrl(e.target.value)} placeholder="https://..." className={inputCls} />
+                  <p className="mt-1 text-[10px] text-muted-foreground">Or upload</p>
+                  <input type="file" accept="image/*" disabled={faviconUploading} className="mt-1 w-full text-xs file:mr-2 file:rounded-full file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-primary-foreground" onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setFaviconUploading(true);
+                    try {
+                      const url = await uploadServiceImage(file, supabase);
+                      setSettingsFaviconUrl(url);
+                      showSuccess("Favicon uploaded");
+                    } catch (err: unknown) {
+                      showError("Upload failed", err instanceof Error ? err.message : "Failed to upload favicon");
+                    } finally {
+                      setFaviconUploading(false);
+                      e.target.value = "";
+                    }
+                  }} />
                 </div>
                 <div>
                   <label className={labelCls}>Primary color</label>
@@ -1853,7 +2267,7 @@ const Admin = () => {
                     setBrandingSaving(true);
                     try {
                       const themeConfig = { ...(tenant?.theme_config || {}), primary_color: settingsPrimaryColor };
-                      const { error } = await supabase.from("tenants").update({ logo_url: settingsLogoUrl.trim() || null, theme_config: themeConfig }).eq("id", tenantId);
+                      const { error } = await supabase.from("tenants").update({ logo_url: settingsLogoUrl.trim() || null, favicon_url: settingsFaviconUrl.trim() || null, theme_config: themeConfig }).eq("id", tenantId);
                       if (error) throw error;
                       await refreshTenant();
                       showSuccess("Saved", "Branding saved.");

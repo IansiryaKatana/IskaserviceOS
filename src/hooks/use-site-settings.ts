@@ -88,6 +88,7 @@ export function useUpdateSiteSetting() {
 }
 
 export function useUpsertSiteSetting() {
+  const supabase = useSupabase();
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (setting: { key: string; value: string | null; tenant_id?: string | null }) => {

@@ -6,6 +6,8 @@
   X-XSS-Protection: 1; mode=block
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
+  # CSP: allows our app + Google Fonts + Stripe. Stripe's iframe has its own CSP (we cannot change it); Mulish font violations inside Stripe's iframe are expected and harmless.
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://js.stripe.com; style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; frame-src 'self' https://js.stripe.com https://m.stripe.network https://hooks.stripe.com; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.stripe.com https://hooks.stripe.com; img-src 'self' data: https:; base-uri 'self'
 
 # Cache static assets
 /assets/*

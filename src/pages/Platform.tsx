@@ -57,7 +57,7 @@ import { RecordsPagination } from "@/components/RecordsPagination";
 import { useFeedback } from "@/hooks/use-feedback";
 import { usePagination } from "@/hooks/use-pagination";
 import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { useSupabase } from "@/integrations/supabase/supabase-context";
 import type { Json } from "@/integrations/supabase/types";
 import { useSiteSettings, useUpsertSiteSetting } from "@/hooks/use-site-settings";
 import { useTenantPaymentSettingsForm } from "@/hooks/use-tenant-payment-settings";
@@ -108,6 +108,7 @@ type BgPage = "homepage" | "reviews";
 
 // Media Management Component
 const MediaManagement = () => {
+  const supabase = useSupabase();
   const { data: settings } = useSiteSettings(null);
   const upsertSetting = useUpsertSiteSetting();
   const { showSuccess, showError } = useFeedback();
@@ -166,7 +167,9 @@ const MediaManagement = () => {
 
       showSuccess("Image uploaded", `${type === "desktop" ? "Desktop" : "Mobile"} image saved successfully.`);
     } catch (err: any) {
-      showError("Upload failed", err.message || "Failed to upload image");
+      const msg = err?.message ?? String(err) ?? "Failed to upload image";
+      console.error("[Platform MediaManagement handleImageUpload]", err);
+      showError("Upload failed", msg);
     } finally {
       setUploading(false);
     }
@@ -407,6 +410,7 @@ const MediaManagement = () => {
 
 /** Tenant-specific homepage background (desktop + mobile). Loads current values from site_settings. */
 const TenantHomepageBgEditor = ({ tenantId }: { tenantId: string }) => {
+  const supabase = useSupabase();
   const defaultUrl = "/images/hero-1.jpg";
   const { data: settings } = useSiteSettings(tenantId);
   const upsertSetting = useUpsertSiteSetting();
@@ -437,7 +441,9 @@ const TenantHomepageBgEditor = ({ tenantId }: { tenantId: string }) => {
       else setMobileImage(publicUrl);
       showSuccess("Image uploaded", `${type === "desktop" ? "Desktop" : "Mobile"} homepage background saved.`);
     } catch (err: any) {
-      showError("Upload failed", err.message || "Failed to upload");
+      const msg = err?.message ?? String(err) ?? "Failed to upload";
+      console.error("[Platform TenantHomepageBgEditor handleUpload]", err);
+      showError("Upload failed", msg);
     } finally {
       setUploading(false);
     }
@@ -487,6 +493,7 @@ const TenantHomepageBgEditor = ({ tenantId }: { tenantId: string }) => {
 
 /** Tenant-specific review page background (desktop + mobile). Used when editing a tenant. */
 const TenantReviewBgEditor = ({ tenantId }: { tenantId: string }) => {
+  const supabase = useSupabase();
   const { data: settings } = useSiteSettings(tenantId);
   const upsertSetting = useUpsertSiteSetting();
   const { showSuccess, showError } = useFeedback();
@@ -516,7 +523,9 @@ const TenantReviewBgEditor = ({ tenantId }: { tenantId: string }) => {
       else setMobileImage(publicUrl);
       showSuccess("Image uploaded", `${type === "desktop" ? "Desktop" : "Mobile"} background saved.`);
     } catch (err: any) {
-      showError("Upload failed", err.message || "Failed to upload");
+      const msg = err?.message ?? String(err) ?? "Failed to upload";
+      console.error("[Platform TenantReviewBgEditor handleUpload]", err);
+      showError("Upload failed", msg);
     } finally {
       setUploading(false);
     }
@@ -730,6 +739,7 @@ interface ConfirmState {
 }
 
 const Platform = () => {
+  const supabase = useSupabase();
   const { signOut } = useAuth();
   const { showSuccess, showError } = useFeedback();
   const [confirmState, setConfirmState] = useState<ConfirmState | null>(null);
@@ -763,6 +773,8 @@ const Platform = () => {
     supabase_url: "",
     supabase_anon_key: "",
   });
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [faviconUploading, setFaviconUploading] = useState(false);
 
   // Platform Admins
   const { data: platformAdmins, isLoading: loadingAdmins } = usePlatformAdmins();
@@ -1395,8 +1407,9 @@ const Platform = () => {
                                     try {
                                       await deleteTenant.mutateAsync(t.id);
                                       showSuccess("Deleted", "Tenant deleted successfully.");
-                                    } catch (e) {
-                                      showError("Failed", "Could not delete tenant.");
+                                    } catch (e: unknown) {
+                                      const msg = e instanceof Error ? e.message : "Could not delete tenant.";
+                                      showError("Delete failed", msg);
                                       throw e;
                                     }
                                   },
@@ -2043,11 +2056,51 @@ const Platform = () => {
                   <div>
                     <label className={labelCls}>Logo URL</label>
                     <input type="url" value={form.logo_url} onChange={(e) => setForm((f) => ({ ...f, logo_url: e.target.value }))} placeholder="https://..." className={inputCls} />
+                    <p className="mt-1 text-[10px] text-muted-foreground">Or upload</p>
+                    <input type="file" accept="image/*" disabled={logoUploading} className="mt-1 w-full text-xs file:mr-2 file:rounded-full file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-primary-foreground" onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      setLogoUploading(true);
+                      try {
+                        const ext = file.name.split(".").pop() || "png";
+                        const path = `tenant-assets/${editing?.id ?? "new"}/logo-${Date.now()}.${ext}`;
+                        const { error } = await supabase.storage.from("service-images").upload(path, file, { upsert: true });
+                        if (error) throw error;
+                        const { data: { publicUrl } } = supabase.storage.from("service-images").getPublicUrl(path);
+                        setForm((f) => ({ ...f, logo_url: publicUrl }));
+                        showSuccess("Logo uploaded");
+                      } catch (err: unknown) {
+                        showError("Upload failed", err instanceof Error ? err.message : "Failed to upload logo");
+                      } finally {
+                        setLogoUploading(false);
+                        e.target.value = "";
+                      }
+                    }} />
                     {form.logo_url && <img src={form.logo_url} alt="Logo preview" className="mt-1 h-10 rounded border border-border object-contain" />}
                   </div>
                   <div>
                     <label className={labelCls}>Favicon URL</label>
                     <input type="url" value={form.favicon_url} onChange={(e) => setForm((f) => ({ ...f, favicon_url: e.target.value }))} placeholder="https://..." className={inputCls} />
+                    <p className="mt-1 text-[10px] text-muted-foreground">Or upload</p>
+                    <input type="file" accept="image/*" disabled={faviconUploading} className="mt-1 w-full text-xs file:mr-2 file:rounded-full file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-primary-foreground" onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      setFaviconUploading(true);
+                      try {
+                        const ext = file.name.split(".").pop() || "ico";
+                        const path = `tenant-assets/${editing?.id ?? "new"}/favicon-${Date.now()}.${ext}`;
+                        const { error } = await supabase.storage.from("service-images").upload(path, file, { upsert: true });
+                        if (error) throw error;
+                        const { data: { publicUrl } } = supabase.storage.from("service-images").getPublicUrl(path);
+                        setForm((f) => ({ ...f, favicon_url: publicUrl }));
+                        showSuccess("Favicon uploaded");
+                      } catch (err: unknown) {
+                        showError("Upload failed", err instanceof Error ? err.message : "Failed to upload favicon");
+                      } finally {
+                        setFaviconUploading(false);
+                        e.target.value = "";
+                      }
+                    }} />
                   </div>
                   <div>
                     <label className={labelCls}>Custom Domain</label>

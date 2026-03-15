@@ -66,8 +66,8 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <AuthProvider>
       <TenantProvider>
-        <SupabaseClientProvider>
         <ThemeInjector />
+        <SupabaseClientProvider>
         <TooltipProvider>
           <FeedbackProvider>
           <BrowserRouter

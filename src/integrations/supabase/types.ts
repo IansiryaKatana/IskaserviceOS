@@ -682,6 +682,7 @@ export type Database = {
         Returns: boolean
       }
       is_platform_admin: { Args: { _user_id: string }; Returns: boolean }
+      delete_tenant: { Args: { p_tenant_id: string }; Returns: undefined }
     }
     Enums: {
       app_role:
