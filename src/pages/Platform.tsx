@@ -573,6 +573,88 @@ const TenantReviewBgEditor = ({ tenantId }: { tenantId: string }) => {
   );
 };
 
+/** Tenant-specific shop page background (desktop + mobile). Used when editing a tenant. */
+const TenantShopBgEditor = ({ tenantId }: { tenantId: string }) => {
+  const supabase = useSupabase();
+  const { data: settings } = useSiteSettings(tenantId);
+  const upsertSetting = useUpsertSiteSetting();
+  const { showSuccess, showError } = useFeedback();
+  const [desktopImage, setDesktopImage] = useState("");
+  const [mobileImage, setMobileImage] = useState("");
+  const [uploading, setUploading] = useState(false);
+
+  useEffect(() => {
+    const d = settings?.find((s) => s.key === "shop_bg_desktop");
+    const m = settings?.find((s) => s.key === "shop_bg_mobile");
+    setDesktopImage(d?.value || "/images/hero-1.jpg");
+    setMobileImage(m?.value || d?.value || "/images/hero-1.jpg");
+  }, [settings]);
+
+  const handleUpload = async (file: File, type: "desktop" | "mobile") => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const ext = file.name.split(".").pop();
+      const path = `shop/${tenantId}/${type}-${Date.now()}.${ext}`;
+      const { error } = await supabase.storage.from("service-images").upload(path, file, { upsert: true });
+      if (error) throw error;
+      const { data: { publicUrl } } = supabase.storage.from("service-images").getPublicUrl(path);
+      const key = type === "desktop" ? "shop_bg_desktop" : "shop_bg_mobile";
+      await upsertSetting.mutateAsync({ key, value: publicUrl, tenant_id: tenantId });
+      if (type === "desktop") setDesktopImage(publicUrl);
+      else setMobileImage(publicUrl);
+      showSuccess("Image uploaded", `Shop ${type === "desktop" ? "Desktop" : "Mobile"} background saved.`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to upload";
+      console.error("[Platform TenantShopBgEditor handleUpload]", err);
+      showError("Upload failed", msg);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleUrlSave = async (url: string, type: "desktop" | "mobile") => {
+    try {
+      const key = type === "desktop" ? "shop_bg_desktop" : "shop_bg_mobile";
+      await upsertSetting.mutateAsync({ key, value: url, tenant_id: tenantId });
+      if (type === "desktop") setDesktopImage(url);
+      else setMobileImage(url);
+      showSuccess("Saved", "Shop background URL updated.");
+    } catch (err: unknown) {
+      showError("Update failed", err instanceof Error ? err.message : "Failed to save");
+    }
+  };
+
+  const inputCls = "flex-1 rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary sm:text-sm";
+  return (
+    <div className="space-y-4">
+      <p className="text-[10px] text-muted-foreground">Background image for this tenant&apos;s shop page (/t/.../shop).</p>
+      <div className="rounded-xl border border-border bg-card p-4">
+        <h4 className="text-sm font-semibold text-card-foreground mb-3">Desktop</h4>
+        <div className="relative aspect-video w-full overflow-hidden rounded-lg border border-border bg-secondary mb-3">
+          <img src={desktopImage} alt="Shop desktop preview" className="h-full w-full object-cover" onError={(e) => { (e.target as HTMLImageElement).src = "/images/hero-1.jpg"; }} />
+        </div>
+        <input type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f, "desktop"); }} disabled={uploading} className="mb-2 w-full text-xs file:mr-2 file:rounded-full file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-primary-foreground" />
+        <div className="flex gap-2">
+          <input type="url" value={desktopImage} onChange={(e) => setDesktopImage(e.target.value)} placeholder="https://..." className={inputCls} />
+          <button type="button" onClick={() => handleUrlSave(desktopImage, "desktop")} disabled={uploading} className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50">Save</button>
+        </div>
+      </div>
+      <div className="rounded-xl border border-border bg-card p-4">
+        <h4 className="text-sm font-semibold text-card-foreground mb-3">Mobile</h4>
+        <div className="relative aspect-[9/16] w-full max-w-[200px] overflow-hidden rounded-lg border border-border bg-secondary mb-3">
+          <img src={mobileImage} alt="Shop mobile preview" className="h-full w-full object-cover" onError={(e) => { (e.target as HTMLImageElement).src = "/images/hero-1.jpg"; }} />
+        </div>
+        <input type="file" accept="image/*" onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f, "mobile"); }} disabled={uploading} className="mb-2 w-full text-xs file:mr-2 file:rounded-full file:border-0 file:bg-primary file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-primary-foreground" />
+        <div className="flex gap-2">
+          <input type="url" value={mobileImage} onChange={(e) => setMobileImage(e.target.value)} placeholder="https://..." className={inputCls} />
+          <button type="button" onClick={() => handleUrlSave(mobileImage, "mobile")} disabled={uploading} className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50">Save</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 /** Tenant payment credentials for booking payments (PayPal, Stripe, M-Pesa). Money goes to this tenant's account. */
 const TenantPaymentEditor = ({ tenantId }: { tenantId: string }) => {
   const {
@@ -2197,12 +2279,15 @@ const Platform = () => {
                 </>
               )}
 
-              {/* MEDIA: Tenant homepage + review page backgrounds */}
+              {/* MEDIA: Tenant homepage, review + shop page backgrounds */}
               {formSection === "media" && editing && (
                 <div className="space-y-6">
                   <TenantHomepageBgEditor tenantId={editing.id} />
                   <div className="border-t border-border pt-6">
                     <TenantReviewBgEditor tenantId={editing.id} />
+                  </div>
+                  <div className="border-t border-border pt-6">
+                    <TenantShopBgEditor tenantId={editing.id} />
                   </div>
                 </div>
               )}

@@ -120,6 +120,14 @@ const TenantReviews = () => {
               )}
             </Link>
           )}
+          {tenant?.slug && (
+            <Link
+              to={tenant.slug ? `/t/${tenant.slug}/shop` : "/"}
+              className="rounded-full px-4 py-2 transition-colors text-white"
+            >
+              Shop
+            </Link>
+          )}
           <a
             href="/account"
             className={`rounded-full px-4 py-2 transition-colors ${location.pathname === "/account" ? "bg-primary text-primary-foreground" : "text-white"}`}
@@ -161,6 +169,21 @@ const TenantReviews = () => {
                     <ArrowUpRight className={`h-4 w-4 shrink-0 ${isReviewsActive ? "text-primary-foreground/80" : "text-card-foreground/70"}`} />
                   </div>
                   <p className={`mt-1 text-[11px] ${isReviewsActive ? "text-primary-foreground/80" : "text-muted-foreground"}`}>Testimonials</p>
+                </Link>
+              ) : (
+                <div className="min-h-[100px] rounded-xl p-4" aria-hidden />
+              )}
+              {tenant?.slug ? (
+                <Link
+                  to={`/t/${tenant.slug}/shop`}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="flex min-h-[100px] flex-col rounded-xl p-4 text-left transition-all bg-primary/10 hover:bg-primary/15"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-sm font-semibold uppercase tracking-wider text-card-foreground">Shop</span>
+                    <ArrowUpRight className="h-4 w-4 shrink-0 text-card-foreground/70" />
+                  </div>
+                  <p className="mt-1 text-[11px] text-muted-foreground">Buy & pick up</p>
                 </Link>
               ) : (
                 <div className="min-h-[100px] rounded-xl p-4" aria-hidden />

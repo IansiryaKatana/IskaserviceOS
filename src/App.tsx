@@ -20,6 +20,7 @@ import CancelBooking from "./pages/CancelBooking";
 import Pricing from "./pages/Pricing";
 import Reviews from "./pages/Reviews";
 import TenantReviews from "./pages/TenantReviews";
+import TenantShop from "./pages/TenantShop";
 import Documentation from "./pages/Documentation";
 import NotFound from "./pages/NotFound";
 
@@ -84,6 +85,7 @@ const App = () => (
               <Route path="/t/:slug" element={<PageTransition><TenantPage /></PageTransition>} />
               <Route path="/t/:slug/cancel" element={<PageTransition><CancelBooking /></PageTransition>} />
               <Route path="/t/:slug/reviews" element={<PageTransition><TenantReviews /></PageTransition>} />
+              <Route path="/t/:slug/shop" element={<PageTransition><TenantShop /></PageTransition>} />
               <Route path="/login" element={<PageTransition><Login /></PageTransition>} />
               <Route path="/signup" element={<PageTransition><Signup /></PageTransition>} />
               <Route path="/docs" element={<PageTransition><Documentation /></PageTransition>} />

@@ -35,10 +35,21 @@ export function useWaitlist(tenantId: string | undefined, filters?: { status?: s
       if (filters?.status) q = q.eq("status", filters.status);
       if (filters?.date) q = q.eq("desired_date", filters.date);
       const { data, error } = await q;
-      if (error) throw error;
+      if (error) {
+        const msg = error.message?.toLowerCase() ?? "";
+        const missingTable = error.code === "PGRST116" || error.code === "42P01" || msg.includes("404") || msg.includes("relation") || msg.includes("does not exist");
+        if (missingTable) return [] as WaitlistEntry[];
+        throw error;
+      }
       return (data ?? []) as WaitlistEntry[];
     },
     enabled: !!tenantId,
+    retry: (failureCount, error: unknown) => {
+      const e = error as { code?: string; message?: string };
+      const msg = e?.message?.toLowerCase() ?? "";
+      if (e?.code === "PGRST116" || e?.code === "42P01" || msg.includes("404") || msg.includes("does not exist")) return false;
+      return failureCount < 2;
+    },
   });
 }
 

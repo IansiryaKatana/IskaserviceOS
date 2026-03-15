@@ -234,7 +234,7 @@ const Admin = () => {
   const [showAdjustForm, setShowAdjustForm] = useState(false);
   const [adjustItem, setAdjustItem] = useState<StockItem | null>(null);
   const [stockForm, setStockForm] = useState({
-    name: "", sku: "", description: "", quantity: 0, unit: "each", cost_price: 0, sell_price: 0, min_stock: 0, category: "", is_active: true,
+    name: "", sku: "", description: "", quantity: 0, unit: "each", cost_price: 0, sell_price: 0, min_stock: 0, category: "", is_active: true, is_downloadable: false, download_url: "", image_url: "",
   });
   const [adjustForm, setAdjustForm] = useState({ quantity_delta: 0, type: "purchase" as "purchase" | "sale" | "adjustment" | "return", notes: "" });
 
@@ -442,6 +442,21 @@ const Admin = () => {
       showError("Upload failed", msg);
     }
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleStockImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const url = await uploadServiceImage(file, supabase);
+      setStockForm((f) => ({ ...f, image_url: url }));
+      showSuccess("Product image uploaded");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Upload failed";
+      console.error("[Admin handleStockImageUpload]", err);
+      showError("Upload failed", msg);
+    }
+    e.target.value = "";
   };
 
   // Service handlers
@@ -1502,7 +1517,7 @@ const Admin = () => {
                 <button
                   onClick={() => {
                     setEditingStock(null);
-                    setStockForm({ name: "", sku: "", description: "", quantity: 0, unit: "each", cost_price: 0, sell_price: 0, min_stock: 0, category: "", is_active: true });
+                    setStockForm({ name: "", sku: "", description: "", quantity: 0, unit: "each", cost_price: 0, sell_price: 0, min_stock: 0, category: "", is_active: true, is_downloadable: false, download_url: "", image_url: "" });
                     setShowStockForm(true);
                   }}
                   className="flex items-center gap-1.5 rounded-full bg-primary px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-primary-foreground hover:scale-105 transition-transform sm:px-4 sm:text-xs"
@@ -1560,6 +1575,9 @@ const Admin = () => {
                                 min_stock: Number(item.min_stock),
                                 category: item.category || "",
                                 is_active: item.is_active,
+                                is_downloadable: !!item.is_downloadable,
+                                download_url: item.download_url || "",
+                                image_url: (item.metadata as { image_url?: string })?.image_url || "",
                               });
                               setShowStockForm(true);
                             }}
@@ -3202,6 +3220,21 @@ const Admin = () => {
               <div><label className={labelCls}>Name *</label><input type="text" value={stockForm.name} onChange={(e) => setStockForm(f => ({ ...f, name: e.target.value }))} className={inputCls} placeholder="Product name" /></div>
               <div><label className={labelCls}>SKU</label><input type="text" value={stockForm.sku} onChange={(e) => setStockForm(f => ({ ...f, sku: e.target.value }))} className={inputCls} placeholder="Optional" /></div>
               <div><label className={labelCls}>Description</label><textarea value={stockForm.description} onChange={(e) => setStockForm(f => ({ ...f, description: e.target.value }))} rows={2} className={inputCls} /></div>
+              <div>
+                <label className={labelCls}>Product image (shop)</label>
+                <div className="mt-1 flex gap-2">
+                  <input type="url" value={stockForm.image_url} onChange={(e) => setStockForm(f => ({ ...f, image_url: e.target.value }))} placeholder="URL or upload" className={`${inputCls} flex-1`} />
+                  <label className="flex shrink-0 cursor-pointer items-center gap-1 rounded-lg border border-border bg-secondary px-2 py-2 text-[11px] text-muted-foreground hover:text-foreground transition-colors">
+                    <Upload className="h-3 w-3" />
+                    <input type="file" accept="image/*" className="hidden" onChange={handleStockImageUpload} />
+                  </label>
+                </div>
+                {stockForm.image_url && (
+                  <div className="mt-1 h-20 overflow-hidden rounded-lg border border-border">
+                    <img src={stockForm.image_url} alt="Product" className="h-full w-full object-cover" />
+                  </div>
+                )}
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div><label className={labelCls}>Quantity</label><input type="number" step="0.01" value={stockForm.quantity} onChange={(e) => setStockForm(f => ({ ...f, quantity: parseFloat(e.target.value) || 0 }))} className={inputCls} disabled={!!editingStock} /></div>
                 <div>
@@ -3222,19 +3255,28 @@ const Admin = () => {
               <div><label className={labelCls}>Min Stock (alert when below)</label><input type="number" step="0.01" value={stockForm.min_stock} onChange={(e) => setStockForm(f => ({ ...f, min_stock: parseFloat(e.target.value) || 0 }))} className={inputCls} /></div>
               <div><label className={labelCls}>Category</label><input type="text" value={stockForm.category} onChange={(e) => setStockForm(f => ({ ...f, category: e.target.value }))} className={inputCls} placeholder="e.g. salon, spa" /></div>
               <div className="flex items-center gap-2">
+                <input type="checkbox" id="stock_downloadable" checked={stockForm.is_downloadable} onChange={(e) => setStockForm(f => ({ ...f, is_downloadable: e.target.checked }))} className="h-4 w-4 rounded border-border text-primary accent-primary" />
+                <label htmlFor="stock_downloadable" className="text-xs text-card-foreground">Downloadable (shop digital product)</label>
+              </div>
+              {stockForm.is_downloadable && (
+                <div><label className={labelCls}>Download URL</label><input type="url" value={stockForm.download_url} onChange={(e) => setStockForm(f => ({ ...f, download_url: e.target.value }))} className={inputCls} placeholder="https://..." /></div>
+              )}
+              <div className="flex items-center gap-2">
                 <input type="checkbox" id="stock_active" checked={stockForm.is_active} onChange={(e) => setStockForm(f => ({ ...f, is_active: e.target.checked }))} className="h-4 w-4 rounded border-border text-primary accent-primary" />
-                <label htmlFor="stock_active" className="text-xs text-card-foreground">Active (visible in POS)</label>
+                <label htmlFor="stock_active" className="text-xs text-card-foreground">Active (visible in POS & Shop)</label>
               </div>
               <button
                 onClick={async () => {
                   if (!stockForm.name) { showError("Name required"); return; }
                   if (stockForm.sell_price < 0) { showError("Sell price must be >= 0"); return; }
                   try {
+                    const metadataVal = { ...(editingStock?.metadata as Record<string, unknown> || {}), image_url: stockForm.image_url || null };
+                    const { image_url: _img, ...stockFormDb } = stockForm;
                     if (editingStock) {
-                      await updateStockItem.mutateAsync({ id: editingStock.id, ...stockForm, quantity: editingStock.quantity });
+                      await updateStockItem.mutateAsync({ id: editingStock.id, ...stockFormDb, quantity: editingStock.quantity, is_downloadable: stockForm.is_downloadable, download_url: stockForm.download_url || null, metadata: metadataVal });
                       showSuccess("Updated");
                     } else {
-                      await createStockItem.mutateAsync({ ...stockForm, tenant_id: tenantId! });
+                      await createStockItem.mutateAsync({ ...stockForm, tenant_id: tenantId!, is_downloadable: stockForm.is_downloadable, download_url: stockForm.download_url || null, metadata: metadataVal });
                       showSuccess("Created");
                     }
                     setShowStockForm(false);

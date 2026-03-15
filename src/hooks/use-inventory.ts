@@ -15,6 +15,8 @@ export interface StockItem {
   min_stock: number;
   category: string | null;
   is_active: boolean;
+  is_downloadable?: boolean;
+  download_url?: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -91,7 +93,11 @@ export function useCreateStockItem() {
       category?: string | null;
       service_id?: string | null;
       is_active?: boolean;
+      is_downloadable?: boolean;
+      download_url?: string | null;
+      metadata?: Record<string, unknown> | null;
     }) => {
+      const metadataVal = item.metadata && typeof item.metadata === "object" ? item.metadata : {};
       const { data, error } = await supabase
         .from("stock_items")
         .insert({
@@ -107,6 +113,9 @@ export function useCreateStockItem() {
           category: item.category ?? null,
           service_id: item.service_id ?? null,
           is_active: item.is_active ?? true,
+          is_downloadable: item.is_downloadable ?? false,
+          download_url: item.download_url ?? null,
+          metadata: metadataVal,
         })
         .select()
         .single();
